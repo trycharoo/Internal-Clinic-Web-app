@@ -52,7 +52,7 @@ The image test accepts an optional image tag, for example `sh scripts/test-image
 | Database | [`db/tests/regression.sql`](../db/tests/regression.sql) | Real PostgreSQL 16 constraints, foreign keys, slot exclusions, timestamp consistency, and completed-visit/prescription aggregation. Test fixtures and helpers are rolled back. |
 | Development stack | [`scripts/test-stack.sh`](../scripts/test-stack.sh) | Compose configuration, service startup, fresh database initialization/regressions, Redis, and frontend HTTP response. |
 | Delivery artifact | [`scripts/test-image.sh`](../scripts/test-image.sh) | Production frontend image builds and serves its index and bundled assets. |
-| Parser API | [`services/doc-parser/test_app.py`](../services/doc-parser/test_app.py) | Health, API-key rejection, extension and size errors, image OCR, scanned-page OCR, and temp-file cleanup. |
+| Parser API | [`services/doc-parser/test_app.py`](../services/doc-parser/test_app.py) | Health, API-key rejection, extension and upload-size errors, decoded-image and PDF raster limits, image/scanned-page OCR, and temp-file cleanup. Native OCR/rendering are mocked. |
 | Backend proxy | [`backend/server.test.mjs`](../backend/server.test.mjs) | Secret-header forwarding, multipart response handling, unavailable-service errors, and missing configuration. |
 
 Vitest reports coverage for application sources through `npm run test:coverage`. Coverage reports are evidence of exercised code, not proof that every requirement or branch is correct. TypeScript checks are part of the frontend build. The browser suite freezes time for repeatable dates and exercises both desktop and narrow-screen navigation; the application itself still uses the user's local date.
@@ -69,7 +69,7 @@ Useful local reports are `frontend/coverage/index.html` and `frontend/playwright
 | --- | --- |
 | `workflow` | Validate GitHub Actions with actionlint and check shell script syntax. |
 | `backend` | Test multipart proxy forwarding, configuration/errors, and upload limits. |
-| `parser` | Test the document-parser API, extraction, and cleanup. |
+| `parser` | Test the document-parser API, extraction, resource limits, and cleanup. |
 | `frontend` | Install from the lockfile, run unit/component coverage, and execute the desktop/mobile browser suite against a production build. Preserve reports for review. |
 | `stack` | Run the isolated Compose stack smoke test and PostgreSQL regressions. |
 | `container` | Build and smoke-test the frontend image, then save that tested image as a workflow artifact. |

@@ -7,6 +7,8 @@ FastAPI service for extracting embedded PDF text and OCR text from scanned PDF p
 - `GET /health` is unauthenticated.
 - `POST /parse` accepts `multipart/form-data` field `file` and requires `X-API-Key`.
 - Supported extensions: PDF, PNG, JPG/JPEG, WEBP, TIFF. Files are limited to 25 MiB; PDFs are limited to 100 pages and 20 OCR-rendered pages per request.
+- Images are limited to 20,000,000 pixels and 10,000 pixels on either edge, checked before decoding. PDF pages requiring OCR must fit within 4,000 pixels on either edge at 200 DPI, including the PDF's `UserUnit` scale. These limits allow ordinary document scans while bounding the raster size; oversized inputs return 422. Poppler receives an explicit render-size cap, and rendered images are closed after OCR.
+- WebP dimensions are checked directly in the file header before opening the native decoder, which allocates canvas buffers during opening. Image content must also be one of the supported image formats, regardless of its filename.
 
 ## Install on Debian
 
