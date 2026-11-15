@@ -5,7 +5,7 @@ export function patient(overrides: Partial<Patient> = {}): Patient {
     id: 'patient-a', name: 'Alice Santos', initials: 'AS', birthDate: '1990-05-10',
     sex: 'Female', phone: '09171234567', email: 'alice@example.test', patientNumber: 'PT-10001',
     joined: '2026-01-01', allergy: 'Not recorded', allergyStatus: 'unknown', lastVisit: 'New patient',
-    notes: '', records: [], prescriptions: [], ...overrides,
+    notes: '', records: [], prescriptions: [], documents: [], ...overrides,
   }
 }
 

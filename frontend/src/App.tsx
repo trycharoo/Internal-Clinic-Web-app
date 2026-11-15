@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type CSSProperties, type FormEvent, type ReactNode } from 'react'
 import {
   Activity,
   ArrowLeft,
@@ -15,6 +15,7 @@ import {
   Clock3,
   Copy,
   FileText,
+  FileUp,
   HeartPulse,
   LayoutDashboard,
   Menu,
@@ -37,12 +38,12 @@ import QRCode from 'qrcode'
 import {
   ageFromBirthDate, dateKey, hasAppointmentConflict, isStoredAppointments,
   isQueueSession, parseStoredPatients, readStored, saveStored,
-  type AllergyStatus, type Patient, type MedicalRecord, type Prescription,
+  type AllergyStatus, type Patient, type MedicalRecord, type PatientDocument, type Prescription,
   type Appointment, type QueueEntry, type QueueSession,
 } from './clinic'
 
 type Page = 'dashboard' | 'patients' | 'appointments' | 'queue'
-type ChartTab = 'overview' | 'visit' | 'history' | 'prescriptions'
+type ChartTab = 'overview' | 'visit' | 'history' | 'prescriptions' | 'documents'
 type ModalName = 'walk-in' | 'appointment' | null
 
 const STORAGE_PATIENTS = 'northstar-demo-patients-v1'
@@ -300,6 +301,11 @@ function App() {
     notify('Prescription added to the chart.')
   }
 
+  function createPatientDocument(patient: Patient, document: Omit<PatientDocument, 'id' | 'extractedAt'>) {
+    updatePatient(patient.id, { documents: [{ ...document, id: `doc-${createRandomToken()}`, extractedAt: new Date().toISOString() }, ...(patient.documents ?? [])] })
+    notify('Reviewed document text saved to the patient chart.')
+  }
+
   function navigate(nextPage: Page) {
     setPage(nextPage)
     setChartPatientId(null)
@@ -372,6 +378,7 @@ function App() {
               onUpdate={(update) => updatePatient(chartPatient.id, update)}
               onAddRecord={(record) => createMedicalRecord(chartPatient, record)}
               onAddPrescription={(prescription) => createPrescription(chartPatient, prescription)}
+              onAddDocument={(document) => createPatientDocument(chartPatient, document)}
               onSchedule={() => setModal('appointment')}
               onToast={notify}
             />
@@ -804,9 +811,10 @@ function PatientsPage({ patients, onOpenPatient, onNewPatient }: { patients: Pat
   </div>
 }
 
-function PatientChart({ patient, tab, onTabChange, onBack, onUpdate, onAddRecord, onAddPrescription, onSchedule, onToast }: {
+function PatientChart({ patient, tab, onTabChange, onBack, onUpdate, onAddRecord, onAddPrescription, onAddDocument, onSchedule, onToast }: {
   patient: Patient; tab: ChartTab; onTabChange: (tab: ChartTab) => void; onBack: () => void; onUpdate: (update: Partial<Patient>) => void;
-  onAddRecord: (record: Omit<MedicalRecord, 'id' | 'date'>) => void; onAddPrescription: (prescription: Omit<Prescription, 'id' | 'date'>) => void; onSchedule: () => void; onToast: (message: string) => void
+  onAddRecord: (record: Omit<MedicalRecord, 'id' | 'date'>) => void; onAddPrescription: (prescription: Omit<Prescription, 'id' | 'date'>) => void;
+  onAddDocument: (document: Omit<PatientDocument, 'id' | 'extractedAt'>) => void; onSchedule: () => void; onToast: (message: string) => void
 }) {
   const [saving, setSaving] = useState(false)
   const [signs, setSigns] = useState('')
@@ -814,6 +822,10 @@ function PatientChart({ patient, tab, onTabChange, onBack, onUpdate, onAddRecord
   const [diagnosis, setDiagnosis] = useState('')
   const [rxForm, setRxForm] = useState({ medication: '', strength: '', instructions: '', duration: '', notes: '' })
   const [savedRx, setSavedRx] = useState<Prescription | null>(null)
+  const [uploading, setUploading] = useState(false)
+  const [uploadError, setUploadError] = useState('')
+  const [reviewDocument, setReviewDocument] = useState<Omit<PatientDocument, 'id' | 'extractedAt'> | null>(null)
+  const uploadInputRef = useRef<HTMLInputElement>(null)
   useEffect(() => {
     setSaving(true)
     const timer = window.setTimeout(() => setSaving(false), 550)
@@ -840,6 +852,49 @@ function PatientChart({ patient, tab, onTabChange, onBack, onUpdate, onAddRecord
     setRxForm({ medication: '', strength: '', instructions: '', duration: '', notes: '' })
   }
 
+  async function parseUploadedFile(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file) return
+    setUploadError('')
+    setReviewDocument(null)
+    if (file.size > 25 * 1024 * 1024) {
+      setUploadError('File exceeds 25MB limit.')
+      return
+    }
+    setUploading(true)
+    try {
+      const form = new FormData()
+      form.append('file', file)
+      const response = await fetch('/api/documents/parse', { method: 'POST', body: form })
+      const result: unknown = await response.json()
+      if (!response.ok) {
+        const detail = typeof result === 'object' && result !== null && 'detail' in result && typeof result.detail === 'string' ? result.detail : 'Unable to parse document.'
+        throw new Error(detail)
+      }
+      if (typeof result !== 'object' || result === null || !('filename' in result) || typeof result.filename !== 'string'
+        || !('file_type' in result) || typeof result.file_type !== 'string' || !('page_count' in result) || typeof result.page_count !== 'number'
+        || !('ocr_pages_used' in result) || !Array.isArray(result.ocr_pages_used) || !result.ocr_pages_used.every((page) => Number.isInteger(page))
+        || !('text' in result) || typeof result.text !== 'string') throw new Error('The parser returned an invalid response.')
+      setReviewDocument({ filename: result.filename, fileType: result.file_type, pageCount: result.page_count, ocrPagesUsed: result.ocr_pages_used as number[], text: result.text })
+    } catch (error) {
+      setUploadError(error instanceof Error ? error.message : 'Unable to parse document.')
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  function saveReviewedDocument() {
+    if (!reviewDocument || !reviewDocument.text.trim()) {
+      setUploadError('Review the extracted text before saving. The text cannot be empty.')
+      return
+    }
+    onAddDocument(reviewDocument)
+    setReviewDocument(null)
+    setUploadError('')
+    onTabChange('documents')
+  }
+
   async function copyPatientId() {
     try {
       await navigator.clipboard.writeText(patient.patientNumber)
@@ -854,15 +909,17 @@ function PatientChart({ patient, tab, onTabChange, onBack, onUpdate, onAddRecord
     { id: 'visit', label: 'Visit notes', icon: <MessageSquareText size={15} /> },
     { id: 'history', label: 'Medical history', icon: <FileText size={15} /> },
     { id: 'prescriptions', label: 'Prescriptions', icon: <Pill size={15} /> },
+    { id: 'documents', label: 'Documents', icon: <FileText size={15} /> },
   ]
   return <div className="page-wrap chart-page">
     <button className="back-link" onClick={onBack}><ArrowLeft size={15} />Back to patients</button>
     <section className="surface profile-hero">
       <div className="profile-main"><Avatar patient={patient} large /><div className="profile-identity"><div className="profile-name-line"><h1>{patient.name}</h1><span className="profile-active"><i />Active patient</span></div><div className="profile-meta"><span>{patient.patientNumber}</span><i />{ageFromBirthDate(patient.birthDate) ?? 'Age not recorded'}{ageFromBirthDate(patient.birthDate) === null ? '' : ' years old'}<i />{patient.sex || 'Sex not recorded'}<i />Patient since {shortDate(patient.joined)}</div><div className="profile-contact"><span><span className="contact-symbol">⌕</span>{patient.phone || 'No phone on file'}</span><span><span className="contact-symbol">✉</span>{patient.email || 'No email on file'}</span></div></div></div>
-      <div className="profile-actions"><button className="button button-secondary" onClick={onSchedule}><CalendarPlus size={15} />Schedule</button><button className="button button-primary" onClick={() => onTabChange('visit')}><Plus size={16} />Start visit</button><MoreMenu label="More patient actions" items={[{ label: 'Copy patient ID', icon: <Copy size={15} />, onSelect: () => { void copyPatientId() } }, { label: 'Schedule appointment', icon: <CalendarPlus size={15} />, onSelect: onSchedule }]} /></div>
+      <div className="profile-actions"><button className="button button-secondary" onClick={() => { setUploadError(''); uploadInputRef.current?.click() }} disabled={uploading}><FileUp size={15} />{uploading ? 'Parsing…' : 'Upload document'}</button><input ref={uploadInputRef} className="visually-hidden" type="file" accept=".pdf,.png,.jpg,.jpeg,.webp,.tiff,application/pdf,image/png,image/jpeg,image/webp,image/tiff" aria-label="Choose a patient document" onChange={(event) => { void parseUploadedFile(event) }} /><button className="button button-secondary" onClick={onSchedule}><CalendarPlus size={15} />Schedule</button><button className="button button-primary" onClick={() => onTabChange('visit')}><Plus size={16} />Start visit</button><MoreMenu label="More patient actions" items={[{ label: 'Copy patient ID', icon: <Copy size={15} />, onSelect: () => { void copyPatientId() } }, { label: 'Schedule appointment', icon: <CalendarPlus size={15} />, onSelect: onSchedule }]} /></div>
     </section>
+    {uploadError && <div className="upload-error" role="alert">{uploadError}</div>}
     <div className="chart-alert"><span className="alert-icon"><HeartPulse size={15} /></span><span><strong>Allergies:</strong> {patient.allergy}</span><span className="alert-divider" /><span><strong>Last visit:</strong> {patient.lastVisit === 'New patient' ? 'No visits yet' : shortDate(patient.lastVisit)}</span><button onClick={() => onTabChange('history')}>View history <ArrowRight size={13} /></button></div>
-    <div className="chart-tabs">{tabs.map((item) => <button key={item.id} className={tab === item.id ? 'chart-tab chart-tab-active' : 'chart-tab'} onClick={() => onTabChange(item.id)}>{item.icon}{item.label}{item.id === 'history' && <span>{patient.records.length}</span>}{item.id === 'prescriptions' && <span>{patient.prescriptions.length}</span>}</button>)}</div>
+    <div className="chart-tabs">{tabs.map((item) => <button key={item.id} className={tab === item.id ? 'chart-tab chart-tab-active' : 'chart-tab'} onClick={() => onTabChange(item.id)}>{item.icon}{item.label}{item.id === 'history' && <span>{patient.records.length}</span>}{item.id === 'prescriptions' && <span>{patient.prescriptions.length}</span>}{item.id === 'documents' && <span>{patient.documents?.length ?? 0}</span>}</button>)}</div>
 
     {tab === 'overview' && <div className="chart-content chart-overview-grid">
       <div className="chart-main-column"><section className="surface detail-card"><div className="section-heading"><div><div className="section-kicker">PATIENT SNAPSHOT</div><h2>Overview</h2></div><span className="updated-chip"><Check size={13} />Chart up to date</span></div><div className="snapshot-grid"><InfoBlock label="Date of birth" value={patient.birthDate ? `${shortDate(patient.birthDate)}, ${new Date(`${patient.birthDate}T12:00:00`).getFullYear()}` : 'Not provided'} /><InfoBlock label="Sex" value={patient.sex || 'Not provided'} /><InfoBlock label="Phone number" value={patient.phone || 'Not provided'} /><InfoBlock label="Email address" value={patient.email || 'Not provided'} /><InfoBlock label="Patient ID" value={patient.patientNumber} /><InfoBlock label="Known allergies" value={patient.allergy} alert={patient.allergyStatus !== 'none'} /></div></section>
@@ -889,6 +946,8 @@ function PatientChart({ patient, tab, onTabChange, onBack, onUpdate, onAddRecord
       <section className="surface rx-form-card"><div className="section-heading"><div><div className="section-kicker">MEDICATION ORDER</div><h2>New prescription</h2></div><span className="rx-draft-pill">Draft</span></div><form onSubmit={savePrescription} className="rx-form"><Field label="Medication name" required><input id="rx-medication" required value={rxForm.medication} onChange={(event) => setRxForm({ ...rxForm, medication: event.target.value })} placeholder="Search or enter medication" /></Field><div className="form-row"><Field label="Strength"><input value={rxForm.strength} onChange={(event) => setRxForm({ ...rxForm, strength: event.target.value })} placeholder="e.g. 10 mg" /></Field><Field label="Duration"><input value={rxForm.duration} onChange={(event) => setRxForm({ ...rxForm, duration: event.target.value })} placeholder="e.g. 7 days" /></Field></div><Field label="Directions for use"><textarea value={rxForm.instructions} onChange={(event) => setRxForm({ ...rxForm, instructions: event.target.value })} placeholder="Dose, route, and frequency" /></Field><Field label="Additional notes"><textarea value={rxForm.notes} onChange={(event) => setRxForm({ ...rxForm, notes: event.target.value })} placeholder="Optional patient instructions" /></Field><div className="rx-form-footer"><span><ShieldCheck size={14} />Review before printing</span><button className="button button-primary" type="submit"><Plus size={15} />Add to chart</button></div></form></section>
       <section className="surface rx-list-card"><div className="section-heading"><div><div className="section-kicker">PATIENT MEDICATIONS</div><h2>Prescription history</h2></div><span className="record-count">{patient.prescriptions.length}</span></div>{savedRx && <PrescriptionPrint prescription={savedRx} patient={patient} />}{patient.prescriptions.length ? <div className="prescription-list">{patient.prescriptions.map((prescription) => <div className="prescription-item" key={prescription.id}><div className="prescription-symbol"><Pill size={17} /></div><div className="prescription-info"><strong>{prescription.medication}{prescription.strength ? ` · ${prescription.strength}` : ''}</strong><span>{prescription.instructions || 'Directions not entered'}</span><small>Added {shortDate(prescription.date)}{prescription.duration ? ` · ${prescription.duration}` : ''}</small></div><button className="icon-button subtle-icon print-action" aria-label={`Print ${prescription.medication}`} onClick={() => { setSavedRx(prescription); window.setTimeout(() => window.print(), 0) }}><Printer size={16} /></button></div>)}</div> : <EmptyState icon={<Pill size={21} />} title="No prescriptions yet" text="Prescriptions created for this patient will appear here." action="Create prescription" onClick={() => document.getElementById('rx-medication')?.focus()} />}</section>
     </div>}
+    {tab === 'documents' && <div className="chart-content"><section className="surface history-card"><div className="section-heading"><div><div className="section-kicker">PATIENT FILES</div><h2>Parsed documents</h2></div><button className="button button-primary" onClick={() => { setUploadError(''); uploadInputRef.current?.click() }} disabled={uploading}><FileUp size={15} />{uploading ? 'Parsing…' : 'Upload document'}</button></div>{patient.documents?.length ? <div className="document-list">{patient.documents.map((document) => <article className="patient-document" key={document.id}><div className="document-heading"><FileText size={17} /><div><strong>{document.filename}</strong><small>{document.fileType.toUpperCase()} · {document.pageCount} {document.pageCount === 1 ? 'page' : 'pages'} · Saved {new Date(document.extractedAt).toLocaleString()}</small></div></div><p>{document.text}</p>{document.ocrPagesUsed.length > 0 && <small className="document-ocr-note">OCR used on page{document.ocrPagesUsed.length === 1 ? '' : 's'} {document.ocrPagesUsed.join(', ')}.</small>}</article>)}</div> : <EmptyState icon={<FileText size={21} />} title="No documents yet" text="Upload a PDF or image to extract and review its text before saving it here." action="Upload document" onClick={() => uploadInputRef.current?.click()} />}</section></div>}
+    {reviewDocument && <div className="modal-backdrop" role="presentation"><section className="modal-panel document-review-modal" role="dialog" aria-modal="true" aria-labelledby="document-review-title"><div className="modal-heading"><div><div className="section-kicker">REVIEW BEFORE SAVING</div><h2 id="document-review-title">Review extracted text</h2><p>{reviewDocument.filename} · {reviewDocument.fileType.toUpperCase()} · {reviewDocument.pageCount} {reviewDocument.pageCount === 1 ? 'page' : 'pages'}{reviewDocument.ocrPagesUsed.length ? ` · OCR pages ${reviewDocument.ocrPagesUsed.join(', ')}` : ''}</p></div><button className="icon-button" aria-label="Close document review" onClick={() => setReviewDocument(null)}><X size={17} /></button></div><label className="field-label" htmlFor="document-review-text">Extracted text <span className="field-hint">Editable</span></label><textarea id="document-review-text" className="document-review-textarea" value={reviewDocument.text} onChange={(event) => setReviewDocument({ ...reviewDocument, text: event.target.value })} />{uploadError && <small className="form-error" role="alert">{uploadError}</small>}<div className="modal-actions"><button className="button button-secondary" onClick={() => setReviewDocument(null)}>Discard</button><button className="button button-primary" onClick={saveReviewedDocument}><Check size={15} />Save to patient chart</button></div></section></div>}
   </div>
 }
 

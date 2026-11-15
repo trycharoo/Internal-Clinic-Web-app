@@ -42,7 +42,7 @@ services:
   backend:
     image: node:22-alpine
     working_dir: /app
-    command: ["sh", "-c", "echo 'Backend placeholder container'; sleep infinity"]
+    command: ["node", "server.mjs"]
     environment:
       NODE_ENV: development
       PORT: 3000
@@ -54,6 +54,8 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
       REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in your environment or .env file}
+      DOC_PARSER_URL: ${DOC_PARSER_URL:-}
+      DOC_PARSER_API_KEY: ${DOC_PARSER_API_KEY:-}
     volumes:
       - ./backend:/app
     ports:
@@ -71,6 +73,7 @@ services:
     environment:
       NODE_ENV: development
       VITE_API_URL: http://localhost:${BACKEND_PORT:-3000}
+      VITE_API_PROXY_TARGET: http://backend:3000
     volumes:
       - ./frontend:/app
       - frontend_node_modules:/app/node_modules

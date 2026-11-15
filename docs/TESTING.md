@@ -24,6 +24,9 @@ npm run test:e2e
 cd ..
 sh scripts/test-stack.sh
 sh scripts/test-image.sh
+npm test --prefix backend
+python3 -m pip install -r services/doc-parser/requirements-dev.txt
+python3 -m pytest services/doc-parser/test_app.py
 ```
 
 On Linux, install Chromium's operating-system dependencies with `npx playwright install --with-deps chromium` when needed. The browser suite builds the application and starts a production preview on port 4173; that port must be available. It fails if another process is already serving the configured port.
@@ -49,6 +52,8 @@ The image test accepts an optional image tag, for example `sh scripts/test-image
 | Database | [`db/tests/regression.sql`](../db/tests/regression.sql) | Real PostgreSQL 16 constraints, foreign keys, slot exclusions, timestamp consistency, and completed-visit/prescription aggregation. Test fixtures and helpers are rolled back. |
 | Development stack | [`scripts/test-stack.sh`](../scripts/test-stack.sh) | Compose configuration, service startup, fresh database initialization/regressions, Redis, and frontend HTTP response. |
 | Delivery artifact | [`scripts/test-image.sh`](../scripts/test-image.sh) | Production frontend image builds and serves its index and bundled assets. |
+| Parser API | [`services/doc-parser/test_app.py`](../services/doc-parser/test_app.py) | Health, API-key rejection, extension and size errors, image OCR, scanned-page OCR, and temp-file cleanup. |
+| Backend proxy | [`backend/server.test.mjs`](../backend/server.test.mjs) | Secret-header forwarding, multipart response handling, unavailable-service errors, and missing configuration. |
 
 Vitest reports coverage for application sources through `npm run test:coverage`. Coverage reports are evidence of exercised code, not proof that every requirement or branch is correct. TypeScript checks are part of the frontend build. The browser suite freezes time for repeatable dates and exercises both desktop and narrow-screen navigation; the application itself still uses the user's local date.
 
@@ -63,10 +68,12 @@ Useful local reports are `frontend/coverage/index.html` and `frontend/playwright
 | Job | Required checks / output |
 | --- | --- |
 | `workflow` | Validate GitHub Actions with actionlint and check shell script syntax. |
+| `backend` | Test multipart proxy forwarding, configuration/errors, and upload limits. |
+| `parser` | Test the document-parser API, extraction, and cleanup. |
 | `frontend` | Install from the lockfile, run unit/component coverage, and execute the desktop/mobile browser suite against a production build. Preserve reports for review. |
 | `stack` | Run the isolated Compose stack smoke test and PostgreSQL regressions. |
 | `container` | Build and smoke-test the frontend image, then save that tested image as a workflow artifact. |
-| `deliver` | Only on a main-branch push and only after all four check jobs succeed: download the already-tested image and publish it to GHCR with the commit SHA and `main` tags. |
+| `deliver` | Only on a main-branch push and only after all check jobs succeed: download the already-tested image and publish it to GHCR with the commit SHA and `main` tags. |
 
 Pull requests do not publish images. Delivery uses the workflow's GitHub token with package-write permission; repository/organization package policies must permit it. No server credentials or live deployment target are configured. Publishing a frontend image is continuous delivery of the demo, not deployment of a functioning backend EHR.
 
@@ -84,6 +91,6 @@ Use behavioral assertions and negative cases: a rejected booking must leave exis
 
 ## Limits and future tests
 
-The backend container is a placeholder. These checks cannot establish API authorization, shared persistence, a synchronized multi-device queue, staff identity, permitted visit transitions, atomic appointment/visit completion, audit history, migrations, or backup recovery. The SQL history view is not itself an authorization boundary. A browser `localStorage` test is not a server persistence test.
+The backend currently provides only the document-parser proxy. These checks cannot establish API authorization, shared persistence, a synchronized multi-device queue, staff identity, permitted visit transitions, atomic appointment/visit completion, audit history, migrations, or backup recovery. The SQL history view is not itself an authorization boundary. A browser `localStorage` test is not a server persistence test.
 
 Add API integration and browser tests for those capabilities as they are implemented, using the requirement IDs in the SRS. Run future migrations against an existing schema as well as a fresh database. Keep all test fixtures synthetic, and verify workload, security, accessibility, and recovery requirements separately before handling real patient records.

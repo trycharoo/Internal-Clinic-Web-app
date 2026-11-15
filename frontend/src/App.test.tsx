@@ -124,6 +124,40 @@ describe('appointment booking', () => {
 })
 
 describe('clinical documentation', () => {
+  it('reviews editable extracted text before saving it to only the active patient chart', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ filename: 'lab-result.pdf', file_type: 'pdf', page_count: 2, ocr_pages_used: [2], text: 'Original extracted result', processing_time_ms: 120 }), { status: 200, headers: { 'content-type': 'application/json' } }))
+    vi.stubGlobal('fetch', fetchMock)
+    const user = userEvent.setup()
+    render(<App />)
+    await openChart(user)
+    const input = screen.getByLabelText('Choose a patient document') as HTMLInputElement
+    const file = new File(['synthetic pdf'], 'lab-result.pdf', { type: 'application/pdf' })
+    await user.upload(input, file)
+    expect(fetchMock).toHaveBeenCalledWith('/api/documents/parse', expect.objectContaining({ method: 'POST' }))
+    expect(screen.getByRole('dialog', { name: 'Review extracted text' })).toBeInTheDocument()
+    const review = screen.getByRole('textbox', { name: /Extracted text/ })
+    await user.clear(review)
+    await user.type(review, 'Doctor corrected result')
+    expect(savedPatients()[0].documents).toEqual([])
+    await user.click(screen.getByRole('button', { name: 'Save to patient chart' }))
+    expect(savedPatients()[0].documents).toMatchObject([{ filename: 'lab-result.pdf', pageCount: 2, ocrPagesUsed: [2], text: 'Doctor corrected result' }])
+    expect(savedPatients()[1].documents).toEqual([])
+    expect(screen.getByText('Doctor corrected result')).toBeInTheDocument()
+    vi.unstubAllGlobals()
+  })
+
+  it('keeps parser errors visible and does not save a failed upload', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ detail: 'Unsupported file type' }), { status: 415, headers: { 'content-type': 'application/json' } })))
+    const user = userEvent.setup()
+    render(<App />)
+    await openChart(user)
+    fireEvent.change(screen.getByLabelText('Choose a patient document'), { target: { files: [new File(['x'], 'notes.txt', { type: 'text/plain' })] } })
+    expect(await screen.findByRole('alert')).toHaveTextContent('Unsupported file type')
+    expect(savedPatients()[0].documents).toEqual([])
+    expect(screen.queryByRole('dialog', { name: 'Review extracted text' })).not.toBeInTheDocument()
+    vi.unstubAllGlobals()
+  })
+
   it('snapshots interview-only notes into visit history and preserves them after reload', async () => {
     const user = userEvent.setup()
     const view = render(<App />)
