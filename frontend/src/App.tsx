@@ -300,8 +300,8 @@ function App() {
     const patient = existingPatient ?? {
       id: `p-${createRandomToken()}`, name, initials: initialsFromName(name), birthDate: details.birthDate,
       sex: details.sex, phone, email: '', patientNumber: `PT-${String(10500 + patients.length).padStart(5, '0')}`,
-      joined: dateKey(new Date()), allergy: details.allergyStatus === 'known' ? details.allergy.trim() : details.allergyStatus === 'none' ? 'No known allergies' : 'Not recorded',
-      allergyStatus: details.allergyStatus, lastVisit: 'New patient', notes: '', records: [], prescriptions: [],
+      joined: dateKey(new Date()), allergy: 'Not recorded',
+      allergyStatus: 'unknown', lastVisit: 'New patient', notes: '', records: [], prescriptions: [],
     } satisfies Patient
     if (!existingPatient) setPatients((current) => [patient, ...current])
     const entry: QueueEntry = {
@@ -313,6 +313,8 @@ function App() {
       status: 'waiting',
       patientId: patient.id,
       birthDate: details.birthDate,
+      reportedAllergyStatus: details.allergyStatus,
+      reportedAllergy: details.allergy.trim(),
       stage: 'triage',
     }
     setQueueSession((current) => current?.token === token ? { ...current, entries: [...current.entries, entry] } : current)
@@ -333,9 +335,10 @@ function App() {
   function completeQueueVisit(entry: QueueEntry, values: { signs: string; symptoms: string; diagnosis: string; notes: string; medication: string; strength: string; instructions: string; duration: string }) {
     if (!entry.patientId) return
     const encounterId = entry.encounterId ?? entry.id
+    const patient = patients.find((item) => item.id === entry.patientId)
     const record: MedicalRecord = {
       id: `r-${createRandomToken()}`, date: dateKey(new Date()), signs: values.signs.trim(), symptoms: values.symptoms.trim(),
-      diagnosis: values.diagnosis.trim(), notes: values.notes.trim(), encounterId, triage: entry.triage,
+      diagnosis: values.diagnosis.trim(), notes: [patient?.notes.trim(), values.notes.trim()].filter(Boolean).join('\n\n'), encounterId, triage: entry.triage,
     }
     const prescription: Prescription | null = values.medication.trim() ? {
       id: `rx-${createRandomToken()}`, date: record.date, medication: values.medication.trim(), strength: values.strength.trim(),
@@ -507,7 +510,7 @@ function App() {
     {demoOpen && demoRole !== 'Patient' && <>
       {modal === 'walk-in' && <WalkInModal submitLabel={demoRole === 'Attendant' ? 'Register patient' : undefined} onClose={() => setModal(null)} onCreate={addPatient} />}
       {modal === 'appointment' && <AppointmentModal patients={patients} initialPatientId={chartPatientId ?? undefined} onClose={() => setModal(null)} onCreate={addAppointment} />}
-      {triageEntryId && todayQueue && <TriageModal entry={todayQueue.entries.find((entry) => entry.id === triageEntryId)!} patient={patients.find((patient) => patient.id === todayQueue.entries.find((entry) => entry.id === triageEntryId)?.patientId)} onClose={() => setTriageEntryId(null)} onSave={(triage) => { updateQueueStage(triageEntryId, 'ready', triage); setTriageEntryId(null); notify('Triage saved. Patient is ready for doctor handoff.') }} />}
+      {triageEntryId && todayQueue && <TriageModal entry={todayQueue.entries.find((entry) => entry.id === triageEntryId)!} patient={patients.find((patient) => patient.id === todayQueue.entries.find((entry) => entry.id === triageEntryId)?.patientId)} onClose={() => setTriageEntryId(null)} onSave={(triage, allergy) => { const entry = todayQueue.entries.find((item) => item.id === triageEntryId); if (entry?.patientId) updatePatient(entry.patientId, { allergyStatus: allergy.status, allergy: allergy.status === 'known' ? allergy.details : allergy.status === 'none' ? 'No known allergies' : 'Not recorded' }); updateQueueStage(triageEntryId, 'ready', triage); setTriageEntryId(null); notify('Triage and allergy confirmation saved. Patient is ready for doctor handoff.') }} />}
       {consultEntryId && todayQueue && <ConsultationModal entry={todayQueue.entries.find((entry) => entry.id === consultEntryId)!} patient={patients.find((patient) => patient.id === todayQueue.entries.find((entry) => entry.id === consultEntryId)?.patientId)} onClose={() => { updateQueueStage(consultEntryId, 'ready'); setConsultEntryId(null) }} onComplete={(values) => { const entry = todayQueue.entries.find((item) => item.id === consultEntryId); if (entry) completeQueueVisit(entry, values) }} />}
       {toast && <div className="toast"><CheckCircle2 size={17} />{toast}</div>}
     </>}
@@ -688,7 +691,7 @@ function QueueJoinPage({ token, session, storageFailed, onJoin, onBack }: {
         <Field label="Full name" required><input autoComplete="name" maxLength={160} required value={name} onChange={(event) => setName(event.target.value)} placeholder="Your first and last name" /></Field>
         <Field label="Phone number" required><input autoComplete="tel" type="tel" maxLength={32} required value={phone} onChange={(event) => setPhone(event.target.value)} placeholder="Your phone number" /></Field>
         <Field label="Date of birth" required><input type="date" required value={birthDate} onChange={(event) => setBirthDate(event.target.value)} /></Field>
-        <Field label="Sex" required><select required value={sex} onChange={(event) => setSex(event.target.value)}><option value="">Select</option><option>Female</option><option>Male</option><option>Intersex</option><option>Prefer not to say</option></select></Field>
+        <Field label="Sex" required><select required value={sex} onChange={(event) => setSex(event.target.value)}><option value="">Select</option><option>Female</option><option>Male</option><option>Intersex</option><option>Unknown</option><option>Prefer not to say</option></select></Field>
         <Field label="Allergy status" required><select value={allergyStatus} onChange={(event) => setAllergyStatus(event.target.value as AllergyStatus)}><option value="unknown">Not yet known</option><option value="none">No known allergies</option><option value="known">Known allergy</option></select></Field>
         {allergyStatus === 'known' && <Field label="Known allergies" required><input required value={allergy} onChange={(event) => setAllergy(event.target.value)} placeholder="Enter allergy details" /></Field>}
         {error && <p className="form-error" role="alert">{error}</p>}
@@ -701,17 +704,24 @@ function QueueJoinPage({ token, session, storageFailed, onJoin, onBack }: {
   </main>
 }
 
-function TriageModal({ entry, patient, onClose, onSave }: { entry: QueueEntry; patient?: Patient; onClose: () => void; onSave: (triage: NonNullable<QueueEntry['triage']>) => void }) {
+function TriageModal({ entry, patient, onClose, onSave }: { entry: QueueEntry; patient?: Patient; onClose: () => void; onSave: (triage: NonNullable<QueueEntry['triage']>, allergy: { status: AllergyStatus; details: string }) => void }) {
   const [triage, setTriage] = useState({ complaint: '', notes: '', bloodPressure: '', weight: '', temperature: '' })
   const [confirmed, setConfirmed] = useState(false)
-  return <div className="modal-backdrop"><form className="modal-card" role="dialog" aria-modal="true" aria-labelledby="triage-title" onSubmit={(event) => { event.preventDefault(); onSave(triage) }}>
+  const [allergyStatus, setAllergyStatus] = useState<'' | AllergyStatus>('')
+  const [allergyDetails, setAllergyDetails] = useState('')
+  const [allergyError, setAllergyError] = useState('')
+  return <div className="modal-backdrop"><form className="modal-card" role="dialog" aria-modal="true" aria-labelledby="triage-title" onSubmit={(event) => { event.preventDefault(); if (allergyStatus === 'known' && !allergyDetails.trim()) { setAllergyError('Enter the confirmed allergy details.'); return } if (allergyStatus) onSave(triage, { status: allergyStatus, details: allergyDetails.trim() }) }}>
     <div className="modal-header"><div><div className="section-kicker">QUEUE {entry.number} · ATTENDANT HANDOFF</div><h2 id="triage-title">Record triage</h2></div><button type="button" className="icon-button" aria-label="Close" onClick={onClose}><X size={18} /></button></div>
     <div className="linked-patient-banner"><strong>{patient?.name ?? entry.name}</strong><span>{patient?.patientNumber ?? 'Chart not linked'} · DOB {patient?.birthDate ?? 'not recorded'}</span><small>Allergies: {patient?.allergy ?? 'not recorded'}</small></div>
     <p className="modal-copy">Review both chart identifiers with the patient or representative. Queue number alone does not confirm identity.</p>
+    <div className="linked-triage"><strong>Patient-reported allergy status</strong><span>{entry.reportedAllergyStatus ?? 'Not provided'}</span><small>{entry.reportedAllergy || 'No allergy details provided.'}</small></div>
+    <Field label="Confirmed allergy status" required><select required value={allergyStatus} onChange={(event) => { setAllergyStatus(event.target.value as '' | AllergyStatus); setAllergyError(''); if (event.target.value !== 'known') setAllergyDetails('') }}><option value="">Review and select a status...</option><option value="unknown">Unknown / not confirmed</option><option value="none">No known allergies</option><option value="known">Known allergies</option></select></Field>
+    {allergyStatus === 'known' && <Field label="Confirmed allergies" required><input required value={allergyDetails} onChange={(event) => { setAllergyDetails(event.target.value); setAllergyError('') }} /></Field>}
+    {allergyError && <p className="form-error" role="alert">{allergyError}</p>}
     <Field label="Chief complaint" required><input required value={triage.complaint} onChange={(event) => setTriage({ ...triage, complaint: event.target.value })} /></Field>
     <Field label="Initial notes"><textarea value={triage.notes} onChange={(event) => setTriage({ ...triage, notes: event.target.value })} /></Field>
     <div className="form-row"><Field label="Blood pressure"><input value={triage.bloodPressure} onChange={(event) => setTriage({ ...triage, bloodPressure: event.target.value })} placeholder="e.g. 120/80" /></Field><Field label="Weight (kg)"><input type="number" min="0" step="0.1" value={triage.weight} onChange={(event) => setTriage({ ...triage, weight: event.target.value })} /></Field><Field label="Temperature (°C)"><input type="number" min="25" max="45" step="0.1" value={triage.temperature} onChange={(event) => setTriage({ ...triage, temperature: event.target.value })} /></Field></div>
-    <label className="role-confirm"><input type="checkbox" required checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} />I reviewed this patient's chart and confirmed their identity.</label>
+    <label className="role-confirm"><input type="checkbox" required checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} />I reviewed this patient's chart, confirmed their identity, and verified the allergy status above with them or their representative.</label>
     <div className="modal-footer"><button type="button" className="button button-secondary" onClick={onClose}>Cancel</button><button className="button button-primary" type="submit">Save triage & hand off</button></div>
   </form></div>
 }

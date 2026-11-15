@@ -46,6 +46,8 @@ export type QueueEntry = {
   status: 'waiting' | 'called' | 'completed'
   patientId?: string
   birthDate?: string
+  reportedAllergyStatus?: AllergyStatus
+  reportedAllergy?: string
   stage?: 'triage' | 'ready' | 'consulting' | 'complete'
   triage?: { complaint: string; notes: string; bloodPressure: string; weight: string; temperature: string }
   encounterId?: string

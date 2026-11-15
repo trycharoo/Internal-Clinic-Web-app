@@ -133,6 +133,7 @@ test('queue deduplicates check-ins, serves patients, persists and rejects unavai
   await page.getByRole('button', { name: 'Record triage' }).click()
   await page.getByLabel(/^Chief complaint/).fill('Headache')
   await page.getByLabel(/^Initial notes/).fill('No warning symptoms reported')
+  await page.getByLabel(/^Confirmed allergy status/).selectOption('none')
   await page.getByRole('checkbox', { name: /confirmed their identity/ }).check()
   await page.getByRole('button', { name: 'Save triage & hand off' }).click()
   await expect(page.locator('.queue-table-row')).toContainText('Ready for doctor')

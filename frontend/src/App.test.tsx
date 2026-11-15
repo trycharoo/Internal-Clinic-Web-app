@@ -49,12 +49,12 @@ async function openQueue(user: ReturnType<typeof userEvent.setup>) {
   await user.click(within(screen.getByRole('navigation', { name: 'Main navigation' })).getByRole('button', { name: /^Daily queue/ }))
 }
 
-async function joinPreview(user: ReturnType<typeof userEvent.setup>, name: string, phone: string) {
+async function joinPreview(user: ReturnType<typeof userEvent.setup>, name: string, phone: string, sex = 'Female') {
   await user.click(screen.getByRole('button', { name: 'Preview patient check-in' }))
   await user.type(screen.getByRole('textbox', { name: /Full name/ }), name)
   await user.type(screen.getByRole('textbox', { name: /Phone number/ }), phone)
   fireEvent.change(document.querySelector<HTMLInputElement>('input[type="date"]')!, { target: { value: '1990-05-10' } })
-  await user.selectOptions(screen.getByRole('combobox', { name: /Sex/ }), 'Female')
+  await user.selectOptions(screen.getByRole('combobox', { name: /Sex/ }), sex)
   await user.selectOptions(screen.getByRole('combobox', { name: /Allergy status/ }), 'none')
   await user.click(screen.getByRole('button', { name: 'Get my queue number' }))
 }
@@ -232,12 +232,14 @@ describe('clinical documentation', () => {
 describe('daily walk-in queue', () => {
   it('links check-in, triage, consultation, prescription, and history to one encounter', async () => {
     const user = userEvent.setup()
+    localStorage.setItem(storageKeys.patients, JSON.stringify([patient({ notes: 'Existing live-saved interview draft.' }), secondPatient()]))
     renderDemo()
     await openQueue(user)
     await user.click(screen.getByRole('button', { name: 'Generate today’s QR' }))
     await screen.findByAltText('QR code for today’s patient check-in')
     await joinPreview(user, 'Alice Santos', '0917-123-4567')
     expect(screen.getByRole('status')).toHaveTextContent('001')
+    expect(savedPatients().find((item) => item.name === 'Alice Santos')).toMatchObject({ allergyStatus: 'unknown', allergy: 'Not recorded' })
     await user.click(screen.getByRole('button', { name: 'Back to clinic' }))
     await joinPreview(user, 'alice santos', '09171234567')
     expect(screen.getByRole('status')).toHaveTextContent('001')
@@ -250,9 +252,14 @@ describe('daily walk-in queue', () => {
     await user.click(screen.getAllByRole('button', { name: 'Record triage' })[0])
     await user.type(screen.getByRole('textbox', { name: /Chief complaint/ }), 'Headache since yesterday')
     await user.type(screen.getByRole('textbox', { name: /Initial notes/ }), 'No vision changes')
+    const triageDialog = screen.getByRole('dialog', { name: 'Record triage' })
+    await user.click(within(triageDialog).getByRole('button', { name: 'Save triage & hand off' }))
+    expect(savedQueue().entries[0].stage).toBe('triage')
+    await user.selectOptions(within(triageDialog).getByRole('combobox', { name: /Confirmed allergy status/ }), 'none')
     await user.click(screen.getByRole('checkbox', { name: /confirmed their identity/ }))
     await user.click(screen.getByRole('button', { name: 'Save triage & hand off' }))
     expect(savedQueue().entries[0].stage).toBe('ready')
+    expect(savedPatients().find((item) => item.name === 'Alice Santos')).toMatchObject({ allergyStatus: 'none', allergy: 'No known allergies' })
     await user.click(screen.getByRole('button', { name: 'Start consultation' }))
     await user.type(screen.getByRole('textbox', { name: /Assessment \/ diagnosis/ }), 'Tension headache')
     await user.type(screen.getByRole('textbox', { name: /Consultation notes/ }), 'Rest and hydration discussed')
@@ -264,13 +271,50 @@ describe('daily walk-in queue', () => {
     expect(savedQueue().entries.map((entry) => entry.stage)).toEqual(['complete', 'triage'])
     expect(savedPatients()).toHaveLength(2)
     const linkedPatient = savedPatients().find((item) => item.id === savedQueue().entries[0].patientId)!
-    expect(linkedPatient.records[0]).toMatchObject({ diagnosis: 'Tension headache', symptoms: '', notes: 'Rest and hydration discussed', encounterId: savedQueue().entries[0].id, triage: { complaint: 'Headache since yesterday', notes: 'No vision changes' } })
+    expect(linkedPatient.records[0]).toMatchObject({ diagnosis: 'Tension headache', symptoms: '', notes: 'Existing live-saved interview draft.\n\nRest and hydration discussed', encounterId: savedQueue().entries[0].id, triage: { complaint: 'Headache since yesterday', notes: 'No vision changes' } })
+    expect(linkedPatient.notes).toBe('')
     expect(linkedPatient.prescriptions[0]).toMatchObject({ medication: 'Demo analgesic', encounterId: savedQueue().entries[0].id })
     expect(linkedPatient.records[0].encounterId).toBe(linkedPatient.prescriptions[0].encounterId)
     await user.click(screen.getByRole('button', { name: 'View history' }))
     expect(screen.getByRole('heading', { level: 1, name: linkedPatient.name })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'Medical history' })).toBeInTheDocument()
     expect(screen.getByText(/Headache since yesterday/)).toBeInTheDocument()
+  })
+
+  it('accepts unknown sex while keeping a self-reported allergy unconfirmed until reception triage', async () => {
+    const user = userEvent.setup()
+    renderDemo()
+    await openQueue(user)
+    await user.click(screen.getByRole('button', { name: 'Generate today’s QR' }))
+    await screen.findByAltText('QR code for today’s patient check-in')
+    await joinPreview(user, 'Unknown Sex Demo', '09171230000', 'Unknown')
+    expect(savedPatients().find((item) => item.name === 'Unknown Sex Demo')).toMatchObject({ sex: 'Unknown', allergyStatus: 'unknown', allergy: 'Not recorded' })
+    expect(savedQueue().entries[0]).toMatchObject({ reportedAllergyStatus: 'none', reportedAllergy: '' })
+  })
+
+  it('requires nonblank allergy details before reception can confirm a known allergy', async () => {
+    localStorage.setItem(storageKeys.queue, JSON.stringify(queue({ entries: [{
+      id: 'q-allergy', number: '001', name: 'Alice Santos', phone: '09171234567', joinedAt: new Date().toISOString(),
+      status: 'waiting', patientId: 'patient-a', stage: 'triage', reportedAllergyStatus: 'known', reportedAllergy: 'Penicillin',
+    }] })))
+    const user = userEvent.setup()
+    render(<App />)
+    await signIntoDemo(user, 'Attendant')
+    await user.click(screen.getByRole('button', { name: 'Record triage' }))
+    const dialog = within(screen.getByRole('dialog', { name: 'Record triage' }))
+    await user.type(dialog.getByLabelText(/Chief complaint/), 'Synthetic allergy review')
+    await user.selectOptions(dialog.getByRole('combobox', { name: /Confirmed allergy status/ }), 'known')
+    await user.type(dialog.getByRole('textbox', { name: /Confirmed allergies/ }), '   ')
+    await user.click(dialog.getByRole('checkbox', { name: /verified the allergy status/ }))
+    await user.click(dialog.getByRole('button', { name: 'Save triage & hand off' }))
+    expect(dialog.getByRole('alert')).toHaveTextContent('Enter the confirmed allergy details')
+    expect(savedQueue().entries[0].stage).toBe('triage')
+    expect(savedPatients()[0]).toMatchObject({ allergyStatus: 'unknown', allergy: 'Not recorded' })
+    await user.clear(dialog.getByRole('textbox', { name: /Confirmed allergies/ }))
+    await user.type(dialog.getByRole('textbox', { name: /Confirmed allergies/ }), 'Penicillin')
+    await user.click(dialog.getByRole('button', { name: 'Save triage & hand off' }))
+    expect(savedQueue().entries[0].stage).toBe('ready')
+    expect(savedPatients()[0]).toMatchObject({ allergyStatus: 'known', allergy: 'Penicillin' })
   })
 
   it('blocks paused queues and permits check-in again when reopened', async () => {
@@ -767,6 +811,7 @@ describe('explicit demo login routes and role sessions', () => {
     await user.click(screen.getByRole('button', { name: 'Record triage' }))
     const dialog = within(screen.getByRole('dialog', { name: 'Record triage' }))
     await user.type(dialog.getByLabelText(/Chief complaint/), 'Synthetic reception complaint')
+    await user.selectOptions(dialog.getByRole('combobox', { name: /Confirmed allergy status/ }), 'unknown')
     await user.click(dialog.getByRole('checkbox', { name: /confirmed their identity/ }))
     await user.click(dialog.getByRole('button', { name: 'Save triage & hand off' }))
     expect(savedQueue().entries[0]).toMatchObject({ stage: 'ready', triage: { complaint: 'Synthetic reception complaint' } })
