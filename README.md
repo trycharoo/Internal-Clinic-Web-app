@@ -68,7 +68,7 @@ npm ci
 npm run dev
 ```
 
-Open [http://localhost:5173](http://localhost:5173). Document uploads also need the backend proxy running with `npm start --prefix backend`; the root `.env` must contain the parser URL and server-only key. To create and preview a production build:
+Open [http://localhost:5173](http://localhost:5173). Document uploads also need the backend proxy running with `npm start --prefix backend` from the repository root; the root `.env` must contain the parser URL and server-only key. To create and preview a production build:
 
 ```sh
 npm run build

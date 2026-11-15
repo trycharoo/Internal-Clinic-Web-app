@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict'
+import { execFile } from 'node:child_process'
 import { afterEach, describe, it } from 'node:test'
+import { promisify } from 'node:util'
 import { createBackendServer } from './server.mjs'
 
 let server
@@ -68,5 +70,40 @@ describe('document parser proxy', () => {
     })
     assert.equal(response.status, 413)
     assert.deepEqual(await response.json(), { detail: 'Upload exceeds proxy limit' })
+  })
+
+  it('keeps the server alive after a caller cancels an upload', async () => {
+    const serverModule = new URL('./server.mjs', import.meta.url).href
+    const { stdout } = await promisify(execFile)(process.execPath, ['--input-type=module', '--eval', `
+      import assert from 'node:assert/strict'
+      import { createConnection } from 'node:net'
+      import { createBackendServer } from ${JSON.stringify(serverModule)}
+
+      const server = createBackendServer({
+        parserUrl: 'https://parser.example', parserApiKey: 'synthetic',
+        fetchImpl: () => assert.fail('An incomplete upload must not be forwarded'),
+      })
+      let uploadRequest
+      const received = new Promise((resolve) => server.once('request', (request) => {
+        uploadRequest = request
+        request.once('data', resolve)
+      }))
+      await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
+      const socket = createConnection(server.address().port, '127.0.0.1')
+      socket.write('POST /api/documents/parse HTTP/1.1\\r\\nHost: localhost\\r\\nContent-Length: 100000\\r\\nContent-Type: application/octet-stream\\r\\n\\r\\npartial')
+      await received
+      const aborted = new Promise((resolve) => uploadRequest.once('aborted', resolve))
+      socket.destroy()
+      await aborted
+      // Cross an event-loop turn so an unhandled body-read rejection would
+      // terminate this isolated process before its health check.
+      await new Promise((resolve) => setImmediate(resolve))
+      const response = await fetch('http://127.0.0.1:' + server.address().port + '/health')
+      assert.equal(response.status, 200)
+      assert.deepEqual(await response.json(), { status: 'ok', service: 'clinic-backend' })
+      await new Promise((resolve) => server.close(resolve))
+      console.log('Health remains available after cancelled upload')
+    `], { timeout: 10_000 })
+    assert.match(stdout, /Health remains available after cancelled upload/)
   })
 })

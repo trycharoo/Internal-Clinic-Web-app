@@ -23,14 +23,21 @@ export function createBackendServer({ parserUrl = process.env.DOC_PARSER_URL, pa
     const chunks = []
     let size = 0
     let tooLarge = false
-    for await (const chunk of request) {
-      size += chunk.length
-      if (size > maxProxyBodyBytes) {
-        tooLarge = true
-        chunks.length = 0
-        continue
+    try {
+      for await (const chunk of request) {
+        size += chunk.length
+        if (size > maxProxyBodyBytes) {
+          tooLarge = true
+          chunks.length = 0
+          continue
+        }
+        if (!tooLarge) chunks.push(chunk)
       }
-      if (!tooLarge) chunks.push(chunk)
+    } catch {
+      if (!request.aborted && !response.destroyed) {
+        sendJson(response, 400, { detail: 'Unable to read upload' })
+      }
+      return
     }
     if (tooLarge) return sendJson(response, 413, { detail: 'Upload exceeds proxy limit' })
 
