@@ -102,6 +102,30 @@ test('chart scheduling selects its patient and conflicting appointments cannot b
   await expect(page.locator('.upcoming-list .upcoming-row')).toHaveCount(5)
 })
 
+test('uploaded document text is reviewed, editable and persisted in the patient chart', async ({ page }) => {
+  await page.getByRole('button', { name: 'Explore demo workspace' }).click()
+  await page.route('**/api/documents/parse', (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ filename: 'lab-result.pdf', file_type: 'pdf', page_count: 2, ocr_pages_used: [2], text: 'Extracted synthetic lab result', processing_time_ms: 20 }),
+  }))
+  await openChart(page, 'Sofia Reyes')
+  await page.getByLabel('Choose a patient document').setInputFiles({ name: 'lab-result.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.7 synthetic fixture') })
+  const review = page.getByRole('dialog', { name: 'Review extracted text' })
+  await expect(review).toContainText('OCR pages 2')
+  await review.getByLabel(/Extracted text/).fill('Doctor reviewed and corrected the lab result.')
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem('northstar-demo-patients-v1') || '[]').find((patient: { id: string }) => patient.id === 'p-1001')?.documents ?? [])).toEqual([])
+  await review.getByRole('button', { name: 'Save to patient chart' }).click()
+  await expect(page.getByRole('heading', { name: 'Parsed documents' })).toBeVisible()
+  await expect(page.locator('.patient-document')).toContainText('Doctor reviewed and corrected the lab result.')
+
+  await page.reload()
+  await page.getByRole('button', { name: 'Explore demo workspace' }).click()
+  await openChart(page, 'Sofia Reyes')
+  await page.locator('.chart-tabs').getByRole('button', { name: /^Documents/ }).click()
+  await expect(page.locator('.patient-document')).toContainText('Doctor reviewed and corrected the lab result.')
+})
+
 test('queue deduplicates check-ins, serves patients, persists and rejects unavailable links', async ({ page, browser }) => {
   await page.getByRole('button', { name: 'Explore demo workspace' }).click()
   await navigate(page, /^Daily queue/)

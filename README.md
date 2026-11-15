@@ -1,6 +1,6 @@
 # Internal Clinic Web App
 
-A clinic operations demo with a React frontend, a PostgreSQL schema, and a Docker Compose development environment. The backend service is currently a placeholder; the frontend uses sample data stored in the current browser.
+A clinic operations demo with a React frontend, a PostgreSQL schema, and a Docker Compose development environment. The backend currently provides a document-parser proxy; patient and visit data remain sample data stored in the current browser.
 
 ## Prerequisites
 
@@ -46,7 +46,7 @@ docker compose up -d
 docker compose logs -f frontend
 ```
 
-When Vite reports that it is ready, open [http://localhost:5173](http://localhost:5173). The frontend, backend placeholder, PostgreSQL, and Redis run in Compose. PostgreSQL and Redis data persist in Docker volumes when the services stop.
+When Vite reports that it is ready, open [http://localhost:5173](http://localhost:5173). The frontend, document proxy, PostgreSQL, and Redis run in Compose. PostgreSQL and Redis data persist in Docker volumes when the services stop. The proxy forwards uploads to the parser service configured by `DOC_PARSER_URL` and `DOC_PARSER_API_KEY` in `.env`; these values stay on the server and must never use a `VITE_` prefix.
 
 To stop the services:
 
@@ -68,7 +68,7 @@ npm ci
 npm run dev
 ```
 
-Open [http://localhost:5173](http://localhost:5173). To create and preview a production build:
+Open [http://localhost:5173](http://localhost:5173). Document uploads also need the backend proxy running with `npm start --prefix backend` from the repository root; the root `.env` must contain the parser URL and server-only key. To create and preview a production build:
 
 ```sh
 npm run build
@@ -101,7 +101,7 @@ These are public demo credentials, not real accounts. Doctor opens the clinical 
 
 ## Requirements and workflow
 
-The [software requirements specification](docs/SRS.md) defines the proposed walk-in workflow: reception confirms or registers a patient, records triage, queues the visit for the doctor, and retains the consultation and prescriptions in the patient history. It includes requirement IDs, acceptance scenarios, and a matrix showing which behaviors exist in the demo, which are represented only in SQL, and which need backend implementation.
+The [software requirements specification](docs/SRS.md) defines the proposed walk-in workflow: reception confirms or registers a patient, records triage, queues the visit for the doctor, and retains the consultation and prescriptions in the patient history. It includes requirement IDs, acceptance scenarios, and a matrix showing which behaviors exist in the demo, which are represented only in SQL, and which need backend implementation. The document parser's service contract and deployment notes are in [services/doc-parser](services/doc-parser/README.md).
 
 The [Philippines EHR deployment readiness plan](docs/DEPLOYMENT_READINESS.md) reviews current blockers, adds clinical and privacy standards as release criteria, and orders the work needed before the clinic can use real patient records.
 
@@ -132,7 +132,8 @@ See [testing and delivery](docs/TESTING.md) for commands, reports, CI jobs, and 
 
 ## Current demo limitations
 
-- The backend container is a placeholder and does not provide an API yet. PostgreSQL and Redis start for local development, but the frontend does not use them.
+- The backend currently provides only the document-parser proxy. PostgreSQL and Redis start for local development, but patient and visit screens do not use them.
+- The document parser runs on the supplied InstaBox and may pause under its free-plan runtime limits. Its URL can wake an idle box, but this is a trial integration, not an always-on production deployment.
 - Patient, appointment, and queue demo data is stored in browser `localStorage`. Queue check-ins do not synchronize between different browsers or devices.
 - `db/init.sql` runs when Docker creates a new, empty PostgreSQL data volume. Existing volumes are not reinitialized on subsequent starts.
 - Public sample credentials select browser-only role views; real authentication, server-enforced roles, server-backed triage/visit transitions, and audit history remain planned. The local connected encounter and its prescription output remain a demo draft, not a finalized clinical record.

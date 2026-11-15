@@ -1,4 +1,13 @@
 export type AllergyStatus = 'unknown' | 'none' | 'known'
+export type PatientDocument = {
+  id: string
+  filename: string
+  fileType: string
+  pageCount: number
+  ocrPagesUsed: number[]
+  extractedAt: string
+  text: string
+}
 export type Patient = {
   id: string
   name: string
@@ -15,6 +24,7 @@ export type Patient = {
   notes: string
   records: MedicalRecord[]
   prescriptions: Prescription[]
+  documents?: PatientDocument[]
 }
 export type MedicalRecord = { id: string; date: string; signs: string; symptoms: string; diagnosis: string; notes?: string; encounterId?: string; triage?: QueueEntry['triage'] }
 export type Prescription = {
@@ -111,6 +121,12 @@ function isPrescription(value: unknown): value is Prescription {
     && isDateKey(value.date)
 }
 
+function isPatientDocument(value: unknown): value is PatientDocument {
+  return isObject(value) && hasStrings(value, ['id', 'filename', 'fileType', 'extractedAt', 'text'])
+    && typeof value.pageCount === 'number' && Number.isInteger(value.pageCount) && value.pageCount >= 1
+    && Array.isArray(value.ocrPagesUsed) && value.ocrPagesUsed.every((page) => Number.isInteger(page) && page >= 1)
+}
+
 // Older demo records used gender and inferred allergy status from the display text.
 export function parseStoredPatients(value: unknown): Patient[] | null {
   if (!Array.isArray(value)) return null
@@ -120,11 +136,12 @@ export function parseStoredPatients(value: unknown): Patient[] | null {
       || !isDateKey(item.birthDate) || !isDateKey(item.joined)
       || !(item.lastVisit === 'New patient' || isDateKey(item.lastVisit))
       || !Array.isArray(item.records) || !item.records.every(isMedicalRecord)
-      || !Array.isArray(item.prescriptions) || !item.prescriptions.every(isPrescription)) return null
+      || !Array.isArray(item.prescriptions) || !item.prescriptions.every(isPrescription)
+      || (item.documents !== undefined && (!Array.isArray(item.documents) || !item.documents.every(isPatientDocument)))) return null
     const sex = item.sex ?? item.gender ?? ''
     const allergyStatus = item.allergyStatus ?? (item.allergy === 'No known allergies' ? 'none' : item.allergy === 'Not recorded' ? 'unknown' : 'known')
     if (typeof sex !== 'string' || typeof allergyStatus !== 'string' || !['unknown', 'none', 'known'].includes(allergyStatus)) return null
-    patients.push({ ...item, sex, allergyStatus } as Patient)
+    patients.push({ ...item, documents: item.documents ?? [], sex, allergyStatus } as Patient)
   }
   return patients
 }

@@ -4,9 +4,13 @@
 
 The application is an internal clinic workspace for a walk-in patient's journey from reception and triage to a doctor's consultation, prescriptions, and medical history. Scheduled appointments share the same encounter workflow after arrival.
 
-This specification distinguishes the intended system from the current demo. The repository contains a React frontend, an initial PostgreSQL schema, and a Docker Compose development stack. The backend is a placeholder. The frontend uses browser `localStorage`; it does not call PostgreSQL, Redis, or an API. The displayed doctor identity is sample content, not an authenticated session.
+This specification distinguishes the intended system from the current demo. The repository contains a React frontend, an initial PostgreSQL schema, a Docker Compose development stack, and a small backend proxy for document parsing. The frontend uses browser `localStorage` for patient records; apart from parser uploads it does not call PostgreSQL, Redis, or an API. The displayed doctor identity is sample content, not an authenticated session.
 
 “Demo” below means a local browser behavior; “schema” means a database representation or constraint tested directly in PostgreSQL; “planned” means acceptance work remains. Passing the automated suite establishes the behaviors it exercises, not completion of the intended EHR.
+
+### Document upload behavior now present in the demo
+
+Doctors can upload a PDF or supported image from a patient chart. The backend proxy forwards the multipart file and `X-API-Key` to the parser service; the browser never receives the parser key. Extracted text appears in an editable review dialog and is saved to that patient's local chart only after confirmation. The original upload is processed in a temporary file and deleted by the parser. Patient data remains browser-local, and the demo does not authenticate the doctor or authorize patient access server-side.
 
 ## Scope and assumptions
 
