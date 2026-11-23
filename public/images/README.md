@@ -2,7 +2,7 @@
 
 [`clinic-hero.jpg`](clinic-hero.jpg) is the bundled background for the Northstar sign-in screen. Replace this file to change the default cover for everyone; keep the same filename or update the source in [`LoginPage.tsx`](../../src/LoginPage.tsx). Use a landscape image with enough quiet space for the offset form and crop it so the subject remains visible on narrow screens.
 
-Visitors can use **Change cover** to preview their own JPEG, PNG, or WebP up to 5 MiB. The app verifies the image before using it. This preview stays in memory through role changes and demo navigation, resets through **Reset cover**, and returns to the bundled image on refresh. It is not a server upload or a saved clinic setting. See [AUTH-01 in the SRS](../../../docs/SRS.md) for acceptance behavior.
+Visitors can use **Change cover** to preview their own JPEG, PNG, or WebP up to 5 MiB. The app verifies the image before using it. This preview stays in memory through role changes and demo navigation, resets through **Reset cover**, and returns to the bundled image on refresh. It is not a server upload or a saved clinic setting. See [AUTH-01 in the SRS](../../docs/SRS.md) for acceptance behavior.
 
 ## Provenance
 

@@ -4,16 +4,16 @@ Reviewed 2026-11-14 against the working [SRS](SRS.md), [testing guide](TESTING.m
 
 ## Current decision
 
-**No-go for real patient records or live clinical care.** The application is suitable for an internal demonstration with synthetic data. Publishing its frontend image serves a demo; it does not deploy an operational EHR.
+**No-go for real patient records or live clinical care.** The application is suitable for an internal demonstration with synthetic data; it is not an operational EHR.
 
 | Evidence | Current state | Why it blocks clinical use |
 | --- | --- | --- |
-| [Backend service](../docker-compose.yml) and [backend directory](../backend/.gitkeep) | Compose runs a placeholder; there is no application API. | The browser cannot enforce access, transactional workflows, or shared records. |
-| [Frontend state](../frontend/src/App.tsx) | Patients, appointments, and queue are stored in each browser's `localStorage`. | Another device lacks the same chart or queue; durable recovery and concurrent updates cannot be established. |
-| [SRS baseline](SRS.md) and [SQL schema](../db/init.sql) | No authenticated staff session, enforced role permissions, clinical audit, final prescription workflow, or versioned migrations. | A displayed doctor name or database role enum does not prove author identity or protect patient records. |
-| [Testing guide](TESTING.md) | Unit, component, browser, PostgreSQL, stack, and image tests cover the demo. | They do not establish API authorization, cross-device consistency, recovery, or safe clinical operation. |
+| [Backend proxy](../backend/server.mjs) | Provides only the document-parser proxy; there is no EHR application API. | The browser cannot enforce access, transactional workflows, or shared records. |
+| [Frontend state](../src/App.tsx) | Patients, appointments, and queue are stored in each browser's `localStorage`. | Another device lacks the same chart or queue; durable recovery and concurrent updates cannot be established. |
+| [SRS baseline](SRS.md) | No database schema, authenticated staff session, enforced role permissions, clinical audit, final prescription workflow, or versioned migrations. | A displayed doctor name or planned role model does not prove author identity or protect patient records. |
+| [Testing guide](TESTING.md) | Unit, component, browser, backend proxy, and parser tests cover the demo. | They do not establish API authorization, cross-device consistency, recovery, or safe clinical operation. |
 
-The UI, initial relational constraints, synthetic fixtures, and CI checks are useful foundations. They should be retained and extended as the shared system is built.
+The UI, synthetic fixtures, and CI checks are useful foundations. They should be retained and extended as the shared system is built.
 
 ## Is this an MVP today?
 
