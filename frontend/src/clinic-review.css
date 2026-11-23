@@ -1,0 +1,88 @@
+/* Allergy discrepancy review inside the visit dialog. */
+.allergy-review {
+  border: 1px solid #d9b98a;
+  border-radius: 10px;
+  background: #fffaf2;
+  margin: 12px 0;
+  padding: 12px 14px;
+}
+
+.allergy-review legend {
+  font-weight: 600;
+  padding: 0 6px;
+}
+
+.allergy-review p {
+  margin: 0 0 8px;
+  font-size: 0.92rem;
+}
+
+/* QR replacement confirmation on the daily queue page. */
+.queue-rotate-confirm {
+  border: 1px solid #d9e3e4;
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin-top: 12px;
+}
+
+.queue-rotate-confirm p {
+  margin: 0 0 10px;
+  font-size: 0.92rem;
+}
+
+.queue-patient-cell .queue-reported {
+  display: block;
+  max-width: 28rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.queue-lane-badge {
+  margin-left: 0.5rem;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  background: #fef3c7;
+  color: #92400e;
+  font-size: 0.72rem;
+  font-style: normal;
+  font-weight: 600;
+}
+
+.queue-board {
+  display: grid;
+  gap: 0.75rem;
+  width: 100%;
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid rgba(15, 23, 42, 0.12);
+  text-align: left;
+}
+
+.queue-board > div {
+  display: grid;
+  gap: 0.15rem;
+}
+
+.queue-board small {
+  color: #64748b;
+}
+
+.queue-board strong {
+  font-size: 1.1rem;
+}
+
+.queue-board p {
+  margin: 0;
+  font-weight: 600;
+}
+
+/* Staff-flagged emergency ticket: stands out from the age-based priority badge. */
+.queue-lane-badge.queue-lane-urgent {
+  background: #b42318;
+  color: #fff;
+}
+
+.manual-urgent {
+  border-color: #b42318;
+}

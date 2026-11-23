@@ -36,22 +36,44 @@ import {
 } from 'lucide-react'
 import QRCode from 'qrcode'
 import LoginPage from './LoginPage'
+import './clinic-review.css'
 import { demoPath, type DemoRole } from './demoLogin'
 import { PatientDemoPage, ReceptionDemoPage } from './DemoRoleViews'
 import {
-  ageFromBirthDate, dateKey, hasAppointmentConflict, isStoredAppointments,
+  ageFromBirthDate, dateKey, isDateKey, isStoredAppointments, isStoredDateList,
   isQueueSession, parseStoredPatients, readStored, saveStored,
-  type AllergyStatus, type Patient, type MedicalRecord, type PatientDocument, type Prescription,
+  type AllergyDiscrepancy, type AllergyReview, type AllergyStatus, type Patient, type MedicalRecord, type PatientDocument, type Prescription,
   type Appointment, type QueueEntry, type QueueSession,
 } from './clinic'
+import {
+  allergyDescription, appointmentStartTimes, bookingError, checkInError, confirmedAllergyError, documentSizeError,
+  encounterPrescription, encounterRecord, filterPatients, findActiveTicket, findMatchingChart, hasEncounterContent,
+  parsedDocument, parserErrorMessage, patientNumberFor, queueRowAction, queueSnapshot, queueStatusLabel,
+  registrationError, reviewedTextError, searchPatients, visibleDays, type CheckInDetails, type VisitValues,
+  allergyAfterReview, allergyConfirmationError, allergyReviewError, reconcileAllergy, visitAllergyOutcome,
+  closingTimeOptions, intakeStatus, reportedText, reportedTextError, REASON_MAX_LENGTH, SYMPTOMS_MAX_LENGTH, type IntakeStatus,
+  entryLane, laneForAge, laneLabel, nextTicketNumber, nowServing, priorityReason, queueDisplayOrder, ticketStanding, waitingOrder,
+  formatTime, onlineBookingError, toggleOnlineDate, ONLINE_BOOKING_DAYS, ONLINE_VISIT_MINUTES, addDays,
+  manualQueueError, manualQueueLane, phoneDigits, type ManualQueueForm,
+} from './workflow'
+
+// What the doctor records when completing a visit. The allergy decision is required only when a documented allergy conflicts.
+type ConsultationValues = VisitValues & {
+  // Present when no attendant confirmed allergies at triage: the doctor confirms them with the patient at the consultation.
+  allergyConfirmation?: { status: AllergyStatus; details: string }
+  allergyReview?: { decision: 'kept' | 'removed'; reason: string }
+}
 
 type Page = 'dashboard' | 'patients' | 'appointments' | 'queue'
 type ChartTab = 'overview' | 'visit' | 'history' | 'prescriptions' | 'documents'
-type ModalName = 'walk-in' | 'appointment' | null
+type ModalName = 'walk-in' | 'appointment' | 'queue-add' | null
 
 const STORAGE_PATIENTS = 'northstar-demo-patients-v1'
 const STORAGE_APPOINTMENTS = 'northstar-demo-appointments-v1'
 const STORAGE_QUEUE = 'northstar-demo-daily-queue-v1'
+const STORAGE_ONLINE = 'northstar-demo-online-booking-v1'
+// The synthetic patient the demo Patient view is signed in as. Sign-in is a demo; it is not authentication.
+const PATIENT_DEMO_ID = 'p-1001'
 const clinicianName = 'Dr. Maya Reyes (sample clinician)'
 
 function shortDate(value: string) {
@@ -123,6 +145,16 @@ function createRandomToken() {
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')
 }
 
+// Re-renders on an interval so that intake closes on the clock at the doctor's closing time, without a button press.
+function useClock(intervalMs: number): Date {
+  const [now, setNow] = useState(() => new Date())
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(new Date()), intervalMs)
+    return () => window.clearInterval(timer)
+  }, [intervalMs])
+  return now
+}
+
 function queueLink(token: string) {
   const url = new URL(window.location.pathname, window.location.origin)
   url.searchParams.set('queue', token)
@@ -136,6 +168,7 @@ function App() {
     const stored = readStored<QueueSession | null>(STORAGE_QUEUE, () => null, (value): value is QueueSession | null => value === null || isQueueSession(value))
     return stored?.date === dateKey(new Date()) ? stored : null
   })
+  const [onlineDates, setOnlineDates] = useState<string[]>(() => readStored<string[]>(STORAGE_ONLINE, () => [], isStoredDateList))
   const [queueScanToken, setQueueScanToken] = useState<string | null>(() => new URLSearchParams(window.location.search).get('queue'))
   const [page, setPage] = useState<Page>('dashboard')
   const [chartPatientId, setChartPatientId] = useState<string | null>(null)
@@ -166,6 +199,9 @@ function App() {
   useEffect(() => {
     if (!saveStored(STORAGE_APPOINTMENTS, appointments)) setStorageFailed(true)
   }, [appointments])
+  useEffect(() => {
+    if (!saveStored(STORAGE_ONLINE, onlineDates)) setStorageFailed(true)
+  }, [onlineDates])
   useEffect(() => {
     const current = queueSession?.date === dateKey(new Date()) ? queueSession : null
     if (!saveStored(STORAGE_QUEUE, current)) setStorageFailed(true)
@@ -211,11 +247,11 @@ function App() {
   const todayAppointments = useMemo(() => appointments
     .filter((appointment) => appointment.date === dateKey(new Date()) && appointment.status !== 'cancelled')
     .sort((a, b) => a.time.localeCompare(b.time)), [appointments])
+  const now = useClock(30_000)
   const todayQueue = queueSession?.date === dateKey(new Date()) ? queueSession : null
+  const intake: IntakeStatus | null = todayQueue ? intakeStatus(todayQueue, now) : null
   const chartPatient = patients.find((patient) => patient.id === chartPatientId) ?? null
-  const searchResults = search.trim().length > 1
-    ? patients.filter((patient) => `${patient.name} ${patient.patientNumber} ${patient.phone}`.toLowerCase().includes(search.trim().toLowerCase())).slice(0, 5)
-    : []
+  const searchResults = searchPatients(patients, search)
 
   function notify(message: string) {
     setToast(message)
@@ -257,7 +293,7 @@ function App() {
       ...values,
       id: `p-${createRandomToken()}`,
       initials: initialsFromName(values.name),
-      patientNumber: `PT-${String(10500 + patients.length).padStart(5, '0')}`,
+      patientNumber: patientNumberFor(patients.length),
       joined: dateKey(new Date()),
       lastVisit: 'New patient',
       notes: '',
@@ -271,8 +307,8 @@ function App() {
   }
 
   function addAppointment(values: Omit<Appointment, 'id' | 'clinician'>) {
-    const overlaps = hasAppointmentConflict(values, appointments)
-    if (overlaps) return 'That time overlaps an existing appointment. Choose another slot.'
+    const error = bookingError(values, appointments)
+    if (error) return error
     setAppointments((current) => [...current, { ...values, id: `a-${createRandomToken()}`, clinician: clinicianName }])
     setModal(null)
     setPage('appointments')
@@ -281,33 +317,56 @@ function App() {
     return ''
   }
 
-  function generateDailyQueue() {
-    setQueueSession((current) => current?.date === dateKey(new Date())
-      ? { ...current, token: createRandomToken(), isOpen: true }
-      : { date: dateKey(new Date()), token: createRandomToken(), isOpen: true, entries: [] })
+  // A session is always for today's clinic date. Tomorrow's code is made when tomorrow's session is generated.
+  function generateDailyQueue(closesAt: string) {
+    setQueueSession({ date: dateKey(new Date()), token: createRandomToken(), isOpen: true, entries: [], ...(closesAt ? { closesAt } : {}) })
   }
 
-  function joinQueue(token: string, details: { name: string; phone: string; birthDate: string; sex: string; allergyStatus: AllergyStatus; allergy: string }) {
-    if (!todayQueue || todayQueue.date !== dateKey(new Date()) || !todayQueue.isOpen || todayQueue.token !== token) return null
+  // Changing the closing time does not change tickets or the open/paused state. A later time reopens an expired intake.
+  function setClosingTime(closesAt: string) {
+    setQueueSession((current) => current?.date === dateKey(new Date()) ? { ...current, closesAt: closesAt || undefined } : current)
+  }
+
+  function endIntake() {
+    setQueueSession((current) => current?.date === dateKey(new Date()) ? { ...current, ended: true } : current)
+    notify('Today’s intake has ended. New check-ins are turned away until you reopen it.')
+  }
+
+  function reopenIntake() {
+    setQueueSession((current) => current?.date === dateKey(new Date()) ? { ...current, ended: false } : current)
+    // Reopening only clears "ended". A pause or a passed closing time still applies, so say what patients will see.
+    const status = todayQueue ? intakeStatus({ ...todayQueue, ended: false }, new Date()) : 'open'
+    notify(status === 'open' ? 'Intake reopened. Patients can check in again.'
+      : status === 'expired' ? 'Intake reopened, but the closing time has passed. Choose a later closing time to accept check-ins.'
+        : 'Intake reopened, but check-in is still paused. Resume check-in to accept patients.')
+  }
+
+  // Replacing the code invalidates the old link at once. Tickets and the pause/open state are kept as they are.
+  function rotateDailyQueue() {
+    setQueueSession((current) => current?.date === dateKey(new Date()) ? { ...current, token: createRandomToken() } : current)
+    notify('QR code replaced. The previous code no longer works. Today’s tickets and check-in status are unchanged.')
+  }
+
+  function joinQueue(token: string, details: CheckInDetails) {
+    if (!todayQueue || todayQueue.date !== dateKey(new Date()) || intakeStatus(todayQueue, new Date()) !== 'open' || todayQueue.token !== token) return null
     const name = details.name.trim()
     const phone = details.phone.trim()
-    const duplicate = todayQueue.entries.find((entry) => entry.status !== 'completed'
-      && entry.name.toLocaleLowerCase() === name.toLocaleLowerCase()
-      && entry.phone.replace(/\D/g, '') === phone.replace(/\D/g, '')
-      && entry.birthDate === details.birthDate)
+    const identity = { name, phone, birthDate: details.birthDate }
+    const duplicate = findActiveTicket(todayQueue.entries, identity)
     if (duplicate) return duplicate
-    const existingPatient = patients.find((patient) => patient.name.toLocaleLowerCase() === name.toLocaleLowerCase()
-      && patient.phone.replace(/\D/g, '') === phone.replace(/\D/g, '') && patient.birthDate === details.birthDate)
+    const existingPatient = findMatchingChart(patients, identity)
     const patient = existingPatient ?? {
       id: `p-${createRandomToken()}`, name, initials: initialsFromName(name), birthDate: details.birthDate,
-      sex: details.sex, phone, email: '', patientNumber: `PT-${String(10500 + patients.length).padStart(5, '0')}`,
+      sex: details.sex, phone, email: '', patientNumber: patientNumberFor(patients.length),
       joined: dateKey(new Date()), allergy: 'Not recorded',
       allergyStatus: 'unknown', lastVisit: 'New patient', notes: '', records: [], prescriptions: [],
     } satisfies Patient
     if (!existingPatient) setPatients((current) => [patient, ...current])
+    const lane = laneForAge(ageFromBirthDate(details.birthDate, new Date()))
     const entry: QueueEntry = {
       id: `q-${createRandomToken()}`,
-      number: String(todayQueue.entries.length + 1).padStart(3, '0'),
+      lane,
+      number: nextTicketNumber(todayQueue.entries, lane),
       name,
       phone,
       joinedAt: new Date().toISOString(),
@@ -316,10 +375,56 @@ function App() {
       birthDate: details.birthDate,
       reportedAllergyStatus: details.allergyStatus,
       reportedAllergy: details.allergy.trim(),
-      stage: 'triage',
+      stage: 'ready',
+      reportedReason: reportedText(details.reason ?? ''),
+      reportedSymptoms: reportedText(details.symptoms ?? ''),
     }
     setQueueSession((current) => current?.token === token ? { ...current, entries: [...current.entries, entry] } : current)
     return entry
+  }
+
+  // Staff fallback when the QR cannot be used, such as an emergency. It works whatever the intake state, and with no
+  // session at all: then a paused session is made so the ticket has a line to join. Returns an error message, or ''.
+  function addQueueEntryManually(values: ManualQueueForm): string {
+    const error = manualQueueError(values, new Date())
+    if (error) return error
+    const session: QueueSession = todayQueue ?? { date: dateKey(new Date()), token: createRandomToken(), isOpen: false, entries: [] }
+    const name = values.name.trim()
+    const phone = values.phone.trim()
+    const identity = { name, phone, birthDate: values.birthDate }
+    const duplicate = findActiveTicket(session.entries, identity)
+    if (duplicate) return `This patient is already in today’s queue as ${duplicate.number}.`
+    // A blank phone is not an identity, so it never links to an existing chart.
+    const existingPatient = phoneDigits(phone) ? findMatchingChart(patients, identity) : undefined
+    const patient = existingPatient ?? {
+      id: `p-${createRandomToken()}`, name, initials: initialsFromName(name), birthDate: values.birthDate,
+      sex: values.sex, phone, email: '', patientNumber: patientNumberFor(patients.length),
+      joined: dateKey(new Date()), allergy: 'Not recorded',
+      allergyStatus: 'unknown', lastVisit: 'New patient', notes: '', records: [], prescriptions: [],
+    } satisfies Patient
+    if (!existingPatient) setPatients((current) => [patient, ...current])
+    const lane = manualQueueLane(values.urgent, ageFromBirthDate(values.birthDate, new Date()))
+    const entry: QueueEntry = {
+      id: `q-${createRandomToken()}`,
+      lane,
+      number: nextTicketNumber(session.entries, lane),
+      name,
+      phone,
+      joinedAt: new Date().toISOString(),
+      status: 'waiting',
+      patientId: patient.id,
+      birthDate: values.birthDate,
+      // Allergies are confirmed with the patient at triage or at the consultation, never assumed.
+      reportedAllergyStatus: 'unknown',
+      reportedAllergy: '',
+      stage: 'ready',
+      reportedReason: reportedText(values.reason),
+      addedBy: demoRole === 'Attendant' ? 'Attendant' : 'Doctor',
+    }
+    setQueueSession({ ...session, entries: [...session.entries, entry] })
+    setModal(null)
+    notify(`${entry.number} added to today’s queue${lane === 'urgent' ? ' as urgent. The doctor sees it first.' : '.'}${todayQueue ? '' : ' Check-in by QR stays paused until the doctor reopens it.'}`)
+    return ''
   }
 
   function updateQueueEntry(entryId: string, status: QueueEntry['status']) {
@@ -329,29 +434,88 @@ function App() {
     } : current)
   }
 
-  function updateQueueStage(entryId: string, stage: NonNullable<QueueEntry['stage']>, triage?: QueueEntry['triage']) {
-    setQueueSession((current) => current ? { ...current, entries: current.entries.map((entry) => entry.id === entryId ? { ...entry, stage, ...(triage ? { triage } : {}) } : entry) } : current)
+  function updateQueueStage(entryId: string, stage: NonNullable<QueueEntry['stage']>, triage?: QueueEntry['triage'], allergyDiscrepancy?: AllergyDiscrepancy) {
+    setQueueSession((current) => current ? {
+      ...current,
+      entries: current.entries.map((entry) => entry.id === entryId
+        ? { ...entry, stage, ...(triage ? { triage } : {}), ...(allergyDiscrepancy ? { allergyDiscrepancy } : {}) }
+        : entry),
+    } : current)
   }
 
-  function completeQueueVisit(entry: QueueEntry, values: { signs: string; symptoms: string; diagnosis: string; notes: string; medication: string; strength: string; instructions: string; duration: string }) {
+  // Triage may add or confirm allergies. A documented allergy that triage cannot confirm stays on the chart and goes to the doctor.
+  function saveTriage(entryId: string, triage: NonNullable<QueueEntry['triage']>, allergy: { status: AllergyStatus; details: string }) {
+    const entry = todayQueue?.entries.find((item) => item.id === entryId)
+    const chart = patients.find((item) => item.id === entry?.patientId)
+    let discrepancy: AllergyDiscrepancy | undefined
+    if (entry?.patientId && chart) {
+      const reconciliation = reconcileAllergy({ allergyStatus: chart.allergyStatus, allergy: chart.allergy }, allergy)
+      if (reconciliation.chart) updatePatient(entry.patientId, reconciliation.chart)
+      discrepancy = reconciliation.discrepancy ?? undefined
+    }
+    updateQueueStage(entryId, 'ready', triage, discrepancy)
+    setTriageEntryId(null)
+    notify(discrepancy
+      ? 'Triage saved. The documented allergy stays on the chart until the doctor reviews the difference.'
+      : 'Triage and allergy confirmation saved. Patient is ready for doctor handoff.')
+  }
+
+  // Continue later: the patient is no longer being seen, so the ticket returns to the ready list as waiting.
+  function releaseConsultation(entryId: string) {
+    setQueueSession((current) => current ? {
+      ...current,
+      entries: current.entries.map((entry) => entry.id === entryId && entry.status !== 'completed' ? { ...entry, stage: 'ready', status: 'waiting' } : entry),
+    } : current)
+    setConsultEntryId(null)
+  }
+
+  function completeQueueVisit(entry: QueueEntry, values: ConsultationValues) {
     if (!entry.patientId) return
     const encounterId = entry.encounterId ?? entry.id
     const patient = patients.find((item) => item.id === entry.patientId)
+    const date = dateKey(new Date())
+    const outcome = patient
+      ? visitAllergyOutcome({ allergyStatus: patient.allergyStatus, allergy: patient.allergy }, entry.allergyDiscrepancy, values.allergyConfirmation)
+      : { chart: null, discrepancy: null }
+    const review: AllergyReview | undefined = outcome.discrepancy && values.allergyReview
+      ? { decision: values.allergyReview.decision, reportedStatus: outcome.discrepancy.reportedStatus, documentedAllergy: outcome.discrepancy.documentedAllergy, reason: values.allergyReview.reason }
+      : undefined
     const record: MedicalRecord = {
-      id: `r-${createRandomToken()}`, date: dateKey(new Date()), signs: values.signs.trim(), symptoms: values.symptoms.trim(),
-      diagnosis: values.diagnosis.trim(), notes: [patient?.notes.trim(), values.notes.trim()].filter(Boolean).join('\n\n'), encounterId, triage: entry.triage,
+      id: `r-${createRandomToken()}`,
+      ...encounterRecord(values, { date, encounterId, liveNotes: patient?.notes ?? '', triage: entry.triage }),
+      ...(review ? { allergyReview: review } : {}),
     }
-    const prescription: Prescription | null = values.medication.trim() ? {
-      id: `rx-${createRandomToken()}`, date: record.date, medication: values.medication.trim(), strength: values.strength.trim(),
-      instructions: values.instructions.trim(), duration: values.duration.trim(), notes: '', encounterId,
-    } : null
+    const draftPrescription = encounterPrescription(values, { date, encounterId })
+    const prescription: Prescription | null = draftPrescription ? { id: `rx-${createRandomToken()}`, ...draftPrescription } : null
+    const chartAllergy = { ...(outcome.chart ?? {}), ...(review ? allergyAfterReview(review.decision) ?? {} : {}) }
     setPatients((current) => current.map((patient) => patient.id === entry.patientId ? {
-      ...patient, records: [record, ...patient.records], lastVisit: record.date, notes: '',
+      ...patient, ...chartAllergy, records: [record, ...patient.records], lastVisit: record.date, notes: '',
       prescriptions: prescription ? [prescription, ...patient.prescriptions] : patient.prescriptions,
     } : patient))
     setQueueSession((current) => current ? { ...current, entries: current.entries.map((item) => item.id === entry.id ? { ...item, status: 'completed', stage: 'complete', encounterId } : item) } : current)
     setConsultEntryId(null)
-    notify('Visit, triage, and prescription saved to the same patient encounter.')
+    notify('Visit, any triage, and prescription saved to the same patient encounter.')
+  }
+
+  // Doctor: opens or closes online booking for one clinic day. Booked times stay visible to patients either way.
+  function toggleOnlineDay(date: string) {
+    const next = toggleOnlineDate(onlineDates, date)
+    setOnlineDates(next)
+    notify(next.includes(date) ? `Online booking is open for ${date}.` : `Online booking is closed for ${date}.`)
+  }
+
+  // Patient: books a time on a day the doctor has opened. Confirms at once and returns a short reference.
+  function bookOnline(values: { date: string; time: string; reason: string }): { error: string; reference?: string } {
+    const patientId = patients.some((patient) => patient.id === PATIENT_DEMO_ID) ? PATIENT_DEMO_ID : ''
+    const error = onlineBookingError({ patientId, ...values }, { appointments, acceptingDates: onlineDates, now: new Date() })
+    if (error) return { error }
+    const booking: Appointment = {
+      id: `a-${createRandomToken()}`, patientId, date: values.date, time: values.time, duration: ONLINE_VISIT_MINUTES,
+      reason: values.reason.trim() ? `Online booking · ${values.reason.trim()}` : 'Online booking',
+      status: 'scheduled', clinician: clinicianName, source: 'online',
+    }
+    setAppointments((current) => [...current, booking])
+    return { error: '', reference: booking.id.slice(-6).toUpperCase() }
   }
 
   function resetDemo() {
@@ -359,14 +523,21 @@ function App() {
     const nextAppointments = createSeedAppointments()
     setPatients(nextPatients)
     setAppointments(nextAppointments)
+    setOnlineDates([])
     setQueueSession(null)
     setModal(null); setTriageEntryId(null); setConsultEntryId(null)
     setChartPatientId(null); setPage('dashboard')
     notify('Synthetic demo scenario reset to its starting state.')
   }
 
+  // Staff pause and resume only while intake is open or paused. Ended or expired intake is changed by the doctor.
   function toggleQueue() {
-    setQueueSession((current) => current ? { ...current, isOpen: !current.isOpen } : current)
+    setQueueSession((current) => {
+      if (!current) return current
+      const status = intakeStatus(current, new Date())
+      if (status === 'closed' || status === 'expired') return current
+      return { ...current, isOpen: !current.isOpen }
+    })
   }
 
   function openQueueCheckIn() {
@@ -414,8 +585,8 @@ function App() {
   return (
     <>
     {!demoOpen && <LoginPage coverImage={loginCover} onCoverChange={setLoginCover} onDemoLogin={openDemo} onExploreDemo={() => openDemo('Doctor')} />}
-    {demoOpen && demoRole === 'Patient' && <PatientDemoPage onSignOut={() => showLogin()} onCheckIn={openQueueCheckIn} queueAvailable={todayQueue?.isOpen === true} />}
-    {demoOpen && demoRole === 'Attendant' && <><ReceptionDemoPage patients={patients} appointments={appointments} session={todayQueue} onSignOut={() => showLogin()} onRegister={() => setModal('walk-in')} onSchedule={() => setModal('appointment')} onTriage={setTriageEntryId} onToggleQueue={toggleQueue} />{storageFailed && <StorageWarning />}</>}
+    {demoOpen && demoRole === 'Patient' && <PatientDemoPage onSignOut={() => showLogin()} onCheckIn={openQueueCheckIn} queueAvailable={intake === 'open'} queueSummary={todayQueue ? { serving: nowServing(todayQueue.entries)?.number ?? null, waiting: waitingOrder(todayQueue.entries).length } : null} patientId={PATIENT_DEMO_ID} appointments={appointments} acceptingDates={onlineDates} onBookOnline={bookOnline} />}
+    {demoOpen && demoRole === 'Attendant' && <><ReceptionDemoPage patients={patients} appointments={appointments} session={todayQueue} intake={intake} onSignOut={() => showLogin()} onRegister={() => setModal('walk-in')} onSchedule={() => setModal('appointment')} onAddToQueue={() => setModal('queue-add')} onTriage={setTriageEntryId} onToggleQueue={toggleQueue} />{storageFailed && <StorageWarning />}</>}
     {demoVisited && <div className="app-shell" hidden={!doctorOpen} inert={!doctorOpen || undefined} style={doctorOpen ? undefined : { display: 'none' }}>
       {mobileNavOpen && <button className="sidebar-scrim" aria-label="Close navigation" onClick={() => setMobileNavOpen(false)} />}
       <aside className={`sidebar ${mobileNavOpen ? 'sidebar-open' : ''}`}>
@@ -494,17 +665,22 @@ function App() {
           ) : page === 'patients' ? (
             <PatientsPage patients={patients} onOpenPatient={openPatient} onNewPatient={() => setModal('walk-in')} />
           ) : page === 'appointments' ? (
-            <AppointmentsPage appointments={appointments} patients={patients} onOpenPatient={openPatient} onNewAppointment={() => setModal('appointment')} />
+            <AppointmentsPage appointments={appointments} patients={patients} onOpenPatient={openPatient} onNewAppointment={() => setModal('appointment')} acceptingDates={onlineDates} onToggleOnline={toggleOnlineDay} />
           ) : (
             <DailyQueuePage
               session={todayQueue}
               onGenerate={generateDailyQueue}
+              onRotate={rotateDailyQueue}
+              intake={intake}
+              onSetClosingTime={setClosingTime}
+              onEndIntake={endIntake}
+              onReopenIntake={reopenIntake}
               onToggleQueue={toggleQueue}
               onUpdateEntry={updateQueueEntry}
-              onTriage={(entryId) => setTriageEntryId(entryId)}
               onConsult={(entryId) => { setConsultEntryId(entryId); updateQueueStage(entryId, 'consulting') }}
               onOpenHistory={(patientId) => openPatient(patientId, 'history')}
               onPreviewCheckIn={openQueueCheckIn}
+              onAddManual={() => setModal('queue-add')}
             />
           )}
         </main>
@@ -516,21 +692,39 @@ function App() {
 
     {demoOpen && demoRole !== 'Patient' && <>
       {modal === 'walk-in' && <WalkInModal submitLabel={demoRole === 'Attendant' ? 'Register patient' : undefined} onClose={() => setModal(null)} onCreate={addPatient} />}
+      {modal === 'queue-add' && <ManualQueueModal onClose={() => setModal(null)} onCreate={addQueueEntryManually} />}
       {modal === 'appointment' && <AppointmentModal patients={patients} initialPatientId={chartPatientId ?? undefined} onClose={() => setModal(null)} onCreate={addAppointment} />}
-      {triageEntryId && todayQueue && <TriageModal entry={todayQueue.entries.find((entry) => entry.id === triageEntryId)!} patient={patients.find((patient) => patient.id === todayQueue.entries.find((entry) => entry.id === triageEntryId)?.patientId)} onClose={() => setTriageEntryId(null)} onSave={(triage, allergy) => { const entry = todayQueue.entries.find((item) => item.id === triageEntryId); if (entry?.patientId) updatePatient(entry.patientId, { allergyStatus: allergy.status, allergy: allergy.status === 'known' ? allergy.details : allergy.status === 'none' ? 'No known allergies' : 'Not recorded' }); updateQueueStage(triageEntryId, 'ready', triage); setTriageEntryId(null); notify('Triage and allergy confirmation saved. Patient is ready for doctor handoff.') }} />}
-      {consultEntryId && todayQueue && <ConsultationModal entry={todayQueue.entries.find((entry) => entry.id === consultEntryId)!} patient={patients.find((patient) => patient.id === todayQueue.entries.find((entry) => entry.id === consultEntryId)?.patientId)} onClose={() => { updateQueueStage(consultEntryId, 'ready'); setConsultEntryId(null) }} onComplete={(values) => { const entry = todayQueue.entries.find((item) => item.id === consultEntryId); if (entry) completeQueueVisit(entry, values) }} />}
+      {triageEntryId && todayQueue && <TriageModal entry={todayQueue.entries.find((entry) => entry.id === triageEntryId)!} patient={patients.find((patient) => patient.id === todayQueue.entries.find((entry) => entry.id === triageEntryId)?.patientId)} onClose={() => setTriageEntryId(null)} onSave={(triage, allergy) => saveTriage(triageEntryId, triage, allergy)} />}
+      {consultEntryId && todayQueue && <ConsultationModal entry={todayQueue.entries.find((entry) => entry.id === consultEntryId)!} patient={patients.find((patient) => patient.id === todayQueue.entries.find((entry) => entry.id === consultEntryId)?.patientId)} onClose={() => releaseConsultation(consultEntryId)} onComplete={(values) => { const entry = todayQueue.entries.find((item) => item.id === consultEntryId); if (entry) completeQueueVisit(entry, values) }} />}
       {toast && <div className="toast"><CheckCircle2 size={17} />{toast}</div>}
     </>}
     </>
   )
 }
 
-function DailyQueuePage({ session, onGenerate, onToggleQueue, onUpdateEntry, onTriage, onConsult, onOpenHistory, onPreviewCheckIn }: {
+function intakeLabel(intake: IntakeStatus | null, session: QueueSession | null): string {
+  if (!session || !intake) return 'Not started'
+  if (intake === 'open') return 'Accepting check-ins'
+  if (intake === 'paused') return 'Check-in paused'
+  if (intake === 'closed') return 'Intake ended for today'
+  return `Closed at ${session.closesAt ?? ''}`
+}
+
+function ClosingTimeSelect({ value, onChange, label }: { value: string; onChange: (value: string) => void; label: string }) {
+  return <label className="queue-closing-field"><span>{label}</span><select value={value} onChange={(event) => onChange(event.target.value)}><option value="">No closing time (until midnight)</option>{closingTimeOptions().map((time) => <option key={time} value={time}>{time}</option>)}</select></label>
+}
+
+function DailyQueuePage({ session, intake, onAddManual, onGenerate, onRotate, onSetClosingTime, onEndIntake, onReopenIntake, onToggleQueue, onUpdateEntry, onConsult, onOpenHistory, onPreviewCheckIn }: {
   session: QueueSession | null
-  onGenerate: () => void
+  intake: IntakeStatus | null
+  onAddManual: () => void
+  onGenerate: (closesAt: string) => void
+  onRotate: () => void
+  onSetClosingTime: (closesAt: string) => void
+  onEndIntake: () => void
+  onReopenIntake: () => void
   onToggleQueue: () => void
   onUpdateEntry: (entryId: string, status: QueueEntry['status']) => void
-  onTriage: (entryId: string) => void
   onConsult: (entryId: string) => void
   onOpenHistory: (patientId: string) => void
   onPreviewCheckIn: () => void
@@ -538,12 +732,11 @@ function DailyQueuePage({ session, onGenerate, onToggleQueue, onUpdateEntry, onT
   const [qrDataUrl, setQrDataUrl] = useState('')
   const [qrError, setQrError] = useState('')
   const [copied, setCopied] = useState(false)
+  const [rotating, setRotating] = useState(false)
+  const [ending, setEnding] = useState(false)
+  const [closingChoice, setClosingChoice] = useState('')
   const checkInUrl = session ? queueLink(session.token) : ''
-  const waiting = session?.entries.filter((entry) => entry.status === 'waiting' && entry.stage !== 'consulting') ?? []
-  const called = session?.entries.find((entry) => entry.status === 'called' || entry.stage === 'consulting')
-  const consulting = session?.entries.find((entry) => entry.stage === 'consulting')
-  const completedCount = session?.entries.filter((entry) => entry.status === 'completed').length ?? 0
-  const nextWaiting = waiting.find((entry) => !entry.stage || entry.stage === 'ready')
+  const { waiting, called, consulting, completedCount, nextWaiting } = queueSnapshot(session?.entries ?? [])
 
   useEffect(() => {
     let cancelled = false
@@ -577,10 +770,22 @@ function DailyQueuePage({ session, onGenerate, onToggleQueue, onUpdateEntry, onT
     if (!called && nextWaiting) onUpdateEntry(nextWaiting.id, 'called')
   }
 
+  function rowAction(entry: QueueEntry) {
+    const { action, disabled } = queueRowAction(entry, { consultationInProgress: Boolean(consulting), ticketCalled: Boolean(called) })
+    switch (action) {
+      case 'start-consultation': return <button disabled={disabled} onClick={() => onConsult(entry.id)}>Start consultation</button>
+      case 'in-consultation': return <span>In consultation</span>
+      case 'view-history': return <button onClick={() => onOpenHistory(entry.patientId!)}>View history</button>
+      case 'mark-seen': return <button onClick={() => onUpdateEntry(entry.id, 'completed')}>Mark ticket seen</button>
+      case 'call-ticket': return <button disabled={disabled} onClick={() => onUpdateEntry(entry.id, 'called')}>Call ticket</button>
+      case 'seen': return <CheckCircle2 size={17} aria-label="Ticket marked seen" />
+    }
+  }
+
   return <div className="page-wrap queue-page">
     <div className="page-heading-row queue-heading-row">
-          <div><div className="eyebrow"><span className="eyebrow-dot" />{fullDate(dateKey(new Date()))}</div><h1>Daily patient queue</h1><p>Follow a walk-in from check-in through triage, consultation, and chart history.</p></div>
-      <span className={`queue-open-badge ${session?.isOpen ? 'queue-is-open' : ''}`}><i />{session ? (session.isOpen ? 'Accepting check-ins' : 'Check-in paused') : 'Not started'}</span>
+          <div><div className="eyebrow"><span className="eyebrow-dot" />{fullDate(dateKey(new Date()))}</div><h1>Daily patient queue</h1><p>Patients appear here with what they reported at check-in. Choose who to see next, then complete the consultation and chart history.</p></div>
+      <span className={`queue-open-badge ${intake === 'open' ? 'queue-is-open' : ''}`}><i />{intakeLabel(intake, session)}</span>
     </div>
 
     <div className="queue-overview-grid">
@@ -589,11 +794,28 @@ function DailyQueuePage({ session, onGenerate, onToggleQueue, onUpdateEntry, onT
           <div className="section-kicker">PATIENT SELF CHECK-IN</div>
           <h2>Today’s queue QR</h2>
           <p>Open the same-browser preview to register a synthetic patient and issue a queue ticket linked to their clinic chart.</p>
-          {!session ? <button className="button button-primary" onClick={onGenerate}><QrCode size={16} />Generate today’s QR</button> : <div className="queue-qr-actions">
+          {!session ? <div className="queue-generate">
+            <ClosingTimeSelect label="Check-in closes at" value={closingChoice} onChange={setClosingChoice} />
+            <button className="button button-primary" onClick={() => onGenerate(closingChoice)}><QrCode size={16} />Generate today’s QR</button>
+          </div> : <div className="queue-qr-actions">
             <button className="button button-primary" onClick={onPreviewCheckIn}><QrCode size={15} />Preview patient check-in</button>
             <button className="button button-secondary" onClick={() => window.print()}><Printer size={15} />Print QR</button>
           </div>}
           {session && <div className="queue-link-row"><span className="queue-link-lock"><ShieldCheck size={14} /></span><span><strong>Unique link for today</strong><small>{session.date} · The link stops working when the queue closes.</small></span><button className="icon-button subtle-icon" aria-label="Copy patient check-in link" onClick={copyCheckInLink}><Copy size={16} /></button></div>}
+          {session && <div className="queue-session-controls">
+            <ClosingTimeSelect label="Closing time" value={session.closesAt ?? ''} onChange={onSetClosingTime} />
+            {intake === 'expired' && <p className="queue-demo-note">Check-in closed at {session.closesAt}. Choose a later time, or no closing time, to open it again.</p>}
+            {intake === 'closed' && <p className="queue-demo-note">Intake ended for today. Patients who scan the code are told to ask reception.</p>}
+          </div>}
+          {session && (rotating
+            ? <div className="queue-rotate-confirm" role="group" aria-label="Replace QR code">
+              <p>Replacing the code stops the printed QR and the shared link at once. Today’s tickets and the pause or open status stay as they are.</p>
+              <div className="queue-qr-actions">
+                <button className="button button-primary" onClick={() => { onRotate(); setRotating(false) }}>Replace QR code</button>
+                <button className="button button-secondary" onClick={() => setRotating(false)}>Keep current QR</button>
+              </div>
+            </div>
+            : <button className="text-button" onClick={() => setRotating(true)}>Rotate QR</button>)}
           {copied && <small className="queue-copy-confirmation" role="status">Check-in link copied.</small>}
           {qrError && <small className="form-error" role="alert">{qrError}</small>}
           {session && <div className="queue-demo-note"><ShieldCheck size={15} /><span>Same-browser preview only. A separate phone cannot send data to this clinic browser without a shared server.</span></div>}
@@ -621,17 +843,22 @@ function DailyQueuePage({ session, onGenerate, onToggleQueue, onUpdateEntry, onT
 
     <section className="surface queue-list-card">
       <div className="queue-list-heading"><div><div className="section-kicker">TODAY’S LINE</div><h2>Patient queue <span>{session?.entries.length ?? 0}</span></h2></div><div className="queue-list-actions">
-        {session && <button className="button button-secondary" onClick={onToggleQueue}>{session.isOpen ? 'Pause check-in' : 'Reopen check-in'}</button>}
+        <button className="button button-secondary" onClick={onAddManual}><UserRoundPlus size={15} />Add patient manually</button>
+        {session && (intake === 'open' || intake === 'paused') && <button className="button button-secondary" onClick={onToggleQueue}>{session.isOpen ? 'Pause check-in' : 'Reopen check-in'}</button>}
+        {intake === 'closed' && <button className="button button-secondary" onClick={onReopenIntake}>Reopen intake</button>}
+        {session && !session.ended && (ending
+          ? <span className="queue-end-confirm" role="group" aria-label="End today’s intake"><span>New check-ins stop at once. Waiting patients keep their numbers.</span><button className="button button-primary" onClick={() => { onEndIntake(); setEnding(false) }}>End intake for today</button><button className="button button-secondary" onClick={() => setEnding(false)}>Keep intake open</button></span>
+          : <button className="text-button" onClick={() => setEnding(true)}>End today’s intake</button>)}
         <button className="button button-primary" onClick={callNext} disabled={!nextWaiting || Boolean(called)}><ArrowRight size={15} />Call next</button>
       </div></div>
       {session?.entries.length ? <div className="queue-table">
         <div className="queue-table-header"><span>NUMBER</span><span>PATIENT</span><span>JOINED</span><span>STATUS</span><span>ACTION</span></div>
-        {session.entries.map((entry) => <div className="queue-table-row" key={entry.id}>
+        {queueDisplayOrder(session.entries).map((entry) => <div className="queue-table-row" key={entry.id}>
           <strong className="queue-number">{entry.number}</strong>
-          <span className="queue-patient-cell"><strong>{entry.name}</strong><small>{entry.phone}</small></span>
+          <span className="queue-patient-cell"><strong>{entry.name}{entryLane(entry) === 'urgent' && <em className="queue-lane-badge queue-lane-urgent">Urgent</em>}{entryLane(entry) === 'priority' && <em className="queue-lane-badge">{priorityReason(entry.birthDate ? ageFromBirthDate(entry.birthDate, new Date()) : null) ?? 'Priority'}</em>}</strong><small>{entry.phone}</small>{(entry.reportedReason || entry.reportedSymptoms) && <small className="queue-reported">{entry.addedBy ? `Added by ${entry.addedBy.toLowerCase()} · ` : ''}Reported: {[entry.reportedReason, entry.reportedSymptoms].filter(Boolean).join(' — ')}</small>}</span>
           <span className="queue-joined-time">{new Intl.DateTimeFormat('en', { hour: 'numeric', minute: '2-digit' }).format(new Date(entry.joinedAt))}</span>
-          <span className={`queue-entry-status queue-status-${entry.status}`}><i />{entry.stage === 'triage' ? 'Needs triage' : entry.stage === 'ready' ? 'Ready for doctor' : entry.stage === 'consulting' ? 'In consultation' : entry.stage === 'complete' ? 'Visit complete' : entry.status === 'waiting' ? 'Waiting' : entry.status === 'called' ? 'Called' : 'Ticket marked seen'}</span>
-          <span className="queue-entry-action">{entry.stage === 'triage' ? <button onClick={() => onTriage(entry.id)}>Record triage</button> : entry.stage === 'ready' ? <button disabled={Boolean(consulting)} onClick={() => onConsult(entry.id)}>Start consultation</button> : entry.stage === 'consulting' ? <span>In consultation</span> : entry.stage === 'complete' && entry.patientId ? <button onClick={() => onOpenHistory(entry.patientId!)}>View history</button> : entry.status === 'called' ? <button onClick={() => onUpdateEntry(entry.id, 'completed')}>Mark ticket seen</button> : entry.status === 'waiting' ? <button disabled={Boolean(called)} onClick={() => onUpdateEntry(entry.id, 'called')}>Call ticket</button> : <CheckCircle2 size={17} aria-label="Ticket marked seen" />}</span>
+          <span className={`queue-entry-status queue-status-${entry.status}`}><i />{queueStatusLabel(entry)}</span>
+          <span className="queue-entry-action">{rowAction(entry)}</span>
         </div>)}
       </div> : <div className="queue-empty-state"><span><Users size={21} /></span><strong>No patients in line yet</strong><p>When a patient checks in with today’s QR, their number will appear here.</p>{session && <button className="text-button" onClick={onPreviewCheckIn}>Preview the patient check-in form <ArrowRight size={14} /></button>}</div>}
     </section>
@@ -646,7 +873,7 @@ function QueueJoinPage({ token, session, storageFailed, onJoin, onBack }: {
   token: string
   session: QueueSession | null
   storageFailed: boolean
-  onJoin: (token: string, details: { name: string; phone: string; birthDate: string; sex: string; allergyStatus: AllergyStatus; allergy: string }) => QueueEntry | null
+  onJoin: (token: string, details: CheckInDetails) => QueueEntry | null
   onBack: () => void
 }) {
   const [name, setName] = useState('')
@@ -655,21 +882,31 @@ function QueueJoinPage({ token, session, storageFailed, onJoin, onBack }: {
   const [sex, setSex] = useState('')
   const [allergyStatus, setAllergyStatus] = useState<AllergyStatus>('unknown')
   const [allergy, setAllergy] = useState('')
+  const [reason, setReason] = useState('')
+  const [symptoms, setSymptoms] = useState('')
   const [receipt, setReceipt] = useState<QueueEntry | null>(null)
   const [error, setError] = useState('')
   const isValidSession = session?.token === token && session.date === dateKey(new Date())
 
+  // The status is checked again at submission, so a form opened before closing time cannot bypass it.
+  const status = isValidSession && session ? intakeStatus(session, new Date()) : null
+  const intakeNotice = status === 'paused' ? <><strong>Check-in is paused</strong><p>The clinic has paused today’s queue. Please ask the receptionist for help.</p></>
+    : status === 'closed' ? <><strong>Check-in for today has ended</strong><p>The clinic has finished check-in for today. Please ask the receptionist for help.</p></>
+      : status === 'expired' ? <><strong>{`Check-in closed at ${session?.closesAt ?? ''}`}</strong><p>Check-in for today has closed. Please ask the receptionist for help.</p></>
+        : null
+
   function submit(event: FormEvent) {
     event.preventDefault()
-    if (!isValidSession || !session?.isOpen) {
+    if (!isValidSession || !session || intakeStatus(session, new Date()) !== 'open') {
       setError('This clinic queue is no longer accepting check-ins.')
       return
     }
-    if (!name.trim() || !phone.trim() || !/\d/.test(phone) || ageFromBirthDate(birthDate) === null || !sex || (allergyStatus === 'known' && !allergy.trim())) {
-      setError('Enter your name, phone, valid date of birth, sex, and allergy details when known.')
+    const invalid = checkInError({ name, phone, birthDate, sex, allergyStatus, allergy }, new Date()) ?? reportedTextError(reason, symptoms)
+    if (invalid) {
+      setError(invalid)
       return
     }
-    const joined = onJoin(token, { name, phone, birthDate, sex, allergyStatus, allergy })
+    const joined = onJoin(token, { name, phone, birthDate, sex, allergyStatus, allergy, reason, symptoms })
     if (!joined) {
       setError('This clinic queue is no longer accepting check-ins.')
       return
@@ -689,10 +926,11 @@ function QueueJoinPage({ token, session, storageFailed, onJoin, onBack }: {
       {receipt ? <div className="queue-ticket" role="status">
         <span>Your queue number</span><strong>{receipt.number}</strong><small>Please keep this screen open and listen for your number.</small>
         <div className="queue-ticket-person"><span>{receipt.name}</span><span>Checked in at {new Intl.DateTimeFormat('en', { hour: 'numeric', minute: '2-digit' }).format(new Date(receipt.joinedAt))}</span></div>
+        <QueueBoard entries={session?.entries ?? []} ticket={session?.entries.find((item) => item.id === receipt.id) ?? receipt} />
       </div> : !isValidSession ? <div className="queue-unavailable" role="alert">
         <span><Clock3 size={18} /></span><strong>This check-in link isn’t connected</strong><p>This demo stores queue entries in the browser that created the QR. Use the clinic’s preview on that browser; patient phones need a shared server to join the same queue.</p>
-      </div> : !session?.isOpen ? <div className="queue-unavailable" role="status">
-        <span><Clock3 size={18} /></span><strong>Check-in is paused</strong><p>The clinic has paused today’s queue. Please ask the receptionist for help.</p>
+      </div> : intakeNotice ? <div className="queue-unavailable" role="status">
+        <span><Clock3 size={18} /></span>{intakeNotice}
       </div> : <form className="queue-checkin-form" onSubmit={submit}>
         <p>This synthetic demo registration creates a patient chart and a queue ticket on this browser only.</p>
         <Field label="Full name" required><input autoComplete="name" maxLength={160} required value={name} onChange={(event) => setName(event.target.value)} placeholder="Your first and last name" /></Field>
@@ -701,6 +939,8 @@ function QueueJoinPage({ token, session, storageFailed, onJoin, onBack }: {
         <Field label="Sex" required><select required value={sex} onChange={(event) => setSex(event.target.value)}><option value="">Select</option><option>Female</option><option>Male</option><option>Intersex</option><option>Unknown</option><option>Prefer not to say</option></select></Field>
         <Field label="Allergy status" required><select value={allergyStatus} onChange={(event) => setAllergyStatus(event.target.value as AllergyStatus)}><option value="unknown">Not yet known</option><option value="none">No known allergies</option><option value="known">Known allergy</option></select></Field>
         {allergyStatus === 'known' && <Field label="Known allergies" required><input required value={allergy} onChange={(event) => setAllergy(event.target.value)} placeholder="Enter allergy details" /></Field>}
+        <Field label="What brings you in today?" hint="Optional"><input maxLength={REASON_MAX_LENGTH} value={reason} onChange={(event) => setReason(event.target.value)} placeholder="For example: headache since yesterday" /></Field>
+        <Field label="How are you feeling?" hint="Optional, in your own words"><textarea maxLength={SYMPTOMS_MAX_LENGTH} value={symptoms} onChange={(event) => setSymptoms(event.target.value)} placeholder="Where it hurts, how long it has lasted, anything that helps or makes it worse" /></Field>
         {error && <p className="form-error" role="alert">{error}</p>}
         <div className="queue-checkin-note"><ShieldCheck size={15} /><span>The QR and registration preview work in this browser only. This is not a live phone-to-clinic check-in.</span></div>
         <button className="button button-primary" type="submit"><QrCode size={16} />Get my queue number</button>
@@ -711,21 +951,35 @@ function QueueJoinPage({ token, session, storageFailed, onJoin, onBack }: {
   </main>
 }
 
+// What a patient sees while waiting: the current number and where their own ticket stands.
+function QueueBoard({ entries, ticket }: { entries: QueueEntry[]; ticket: QueueEntry }) {
+  const serving = nowServing(entries)
+  const reason = priorityReason(ticket.birthDate ? ageFromBirthDate(ticket.birthDate, new Date()) : null)
+  return <div className="queue-board" aria-label="Queue status">
+    <div><small>Now serving</small><strong>{serving ? serving.number : 'No one yet'}</strong></div>
+    <div><small>Your line</small><strong>{laneLabel(entryLane(ticket))}</strong>{reason && <small>{reason} patients are seen first.</small>}</div>
+    <p>{ticketStanding(entries, ticket)}</p>
+  </div>
+}
+
 function TriageModal({ entry, patient, onClose, onSave }: { entry: QueueEntry; patient?: Patient; onClose: () => void; onSave: (triage: NonNullable<QueueEntry['triage']>, allergy: { status: AllergyStatus; details: string }) => void }) {
-  const [triage, setTriage] = useState({ complaint: '', notes: '', bloodPressure: '', weight: '', temperature: '' })
+  const [triage, setTriage] = useState({ complaint: entry.reportedReason ?? '', notes: '', bloodPressure: '', weight: '', temperature: '' })
   const [confirmed, setConfirmed] = useState(false)
   const [allergyStatus, setAllergyStatus] = useState<'' | AllergyStatus>('')
   const [allergyDetails, setAllergyDetails] = useState('')
   const [allergyError, setAllergyError] = useState('')
-  return <div className="modal-backdrop"><form className="modal-card" role="dialog" aria-modal="true" aria-labelledby="triage-title" onSubmit={(event) => { event.preventDefault(); if (allergyStatus === 'known' && !allergyDetails.trim()) { setAllergyError('Enter the confirmed allergy details.'); return } if (allergyStatus) onSave(triage, { status: allergyStatus, details: allergyDetails.trim() }) }}>
+  return <div className="modal-backdrop"><form className="modal-card" role="dialog" aria-modal="true" aria-labelledby="triage-title" onSubmit={(event) => { event.preventDefault(); const error = confirmedAllergyError(allergyStatus, allergyDetails); if (error) { setAllergyError(error); return } if (allergyStatus) onSave(triage, { status: allergyStatus, details: allergyDetails.trim() }) }}>
     <div className="modal-header"><div><div className="section-kicker">QUEUE {entry.number} · ATTENDANT HANDOFF</div><h2 id="triage-title">Record triage</h2></div><button type="button" className="icon-button" aria-label="Close" onClick={onClose}><X size={18} /></button></div>
     <div className="linked-patient-banner"><strong>{patient?.name ?? entry.name}</strong><span>{patient?.patientNumber ?? 'Chart not linked'} · DOB {patient?.birthDate ?? 'not recorded'}</span><small>Allergies: {patient?.allergy ?? 'not recorded'}</small></div>
-    <p className="modal-copy">Review both chart identifiers with the patient or representative. Queue number alone does not confirm identity.</p>
+    <p className="modal-copy">Triage is optional and does not hold the patient back from the doctor. Review both chart identifiers with the patient or representative. Queue number alone does not confirm identity.</p>
     <div className="linked-triage"><strong>Patient-reported allergy status</strong><span>{entry.reportedAllergyStatus ?? 'Not provided'}</span><small>{entry.reportedAllergy || 'No allergy details provided.'}</small></div>
+    {(entry.reportedReason || entry.reportedSymptoms) && <div className="linked-triage"><strong>Patient’s own words at check-in</strong><span>{entry.reportedReason || 'No reason given.'}</span><small>{entry.reportedSymptoms || 'No description given.'} Unverified until you confirm it with the patient.</small></div>}
     <Field label="Confirmed allergy status" required><select required value={allergyStatus} onChange={(event) => { setAllergyStatus(event.target.value as '' | AllergyStatus); setAllergyError(''); if (event.target.value !== 'known') setAllergyDetails('') }}><option value="">Review and select a status...</option><option value="unknown">Unknown / not confirmed</option><option value="none">No known allergies</option><option value="known">Known allergies</option></select></Field>
     {allergyStatus === 'known' && <Field label="Confirmed allergies" required><input required value={allergyDetails} onChange={(event) => { setAllergyDetails(event.target.value); setAllergyError('') }} /></Field>}
+    {patient?.allergyStatus === 'known' && allergyStatus === 'known' && <p className="modal-note">The chart already lists {patient.allergy}. Confirmed allergies are added to that list, not substituted for it.</p>}
+    {patient?.allergyStatus === 'known' && (allergyStatus === 'none' || allergyStatus === 'unknown') && <p className="modal-note">The chart lists {patient.allergy}. Triage cannot remove a documented allergy. The difference goes to the doctor, and {patient.allergy} stays on the chart until they decide.</p>}
     {allergyError && <p className="form-error" role="alert">{allergyError}</p>}
-    <Field label="Chief complaint" required><input required value={triage.complaint} onChange={(event) => setTriage({ ...triage, complaint: event.target.value })} /></Field>
+    <Field label="Chief complaint"><input value={triage.complaint} onChange={(event) => setTriage({ ...triage, complaint: event.target.value })} /></Field>
     <Field label="Initial notes"><textarea value={triage.notes} onChange={(event) => setTriage({ ...triage, notes: event.target.value })} /></Field>
     <div className="form-row"><Field label="Blood pressure"><input value={triage.bloodPressure} onChange={(event) => setTriage({ ...triage, bloodPressure: event.target.value })} placeholder="e.g. 120/80" /></Field><Field label="Weight (kg)"><input type="number" min="0" step="0.1" value={triage.weight} onChange={(event) => setTriage({ ...triage, weight: event.target.value })} /></Field><Field label="Temperature (°C)"><input type="number" min="25" max="45" step="0.1" value={triage.temperature} onChange={(event) => setTriage({ ...triage, temperature: event.target.value })} /></Field></div>
     <label className="role-confirm"><input type="checkbox" required checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} />I reviewed this patient's chart, confirmed their identity, and verified the allergy status above with them or their representative.</label>
@@ -733,20 +987,47 @@ function TriageModal({ entry, patient, onClose, onSave }: { entry: QueueEntry; p
   </form></div>
 }
 
-function ConsultationModal({ entry, patient, onClose, onComplete }: { entry: QueueEntry; patient?: Patient; onClose: () => void; onComplete: (values: { signs: string; symptoms: string; diagnosis: string; notes: string; medication: string; strength: string; instructions: string; duration: string }) => void }) {
-  const [values, setValues] = useState({ signs: '', symptoms: '', diagnosis: '', notes: '', medication: '', strength: '', instructions: '', duration: '' })
+function ConsultationModal({ entry, patient, onClose, onComplete }: { entry: QueueEntry; patient?: Patient; onClose: () => void; onComplete: (values: ConsultationValues) => void }) {
+  const [values, setValues] = useState({ signs: '', symptoms: entry.reportedSymptoms ?? '', diagnosis: '', notes: '', medication: '', strength: '', instructions: '', duration: '' })
   const [confirmed, setConfirmed] = useState(false)
   const update = (key: keyof typeof values, value: string) => setValues((current) => ({ ...current, [key]: value }))
-  return <div className="modal-backdrop"><form className="modal-card modal-wide" role="dialog" aria-modal="true" aria-labelledby="consult-title" onSubmit={(event) => { event.preventDefault(); onComplete(values) }}>
+  const [review, setReview] = useState<{ decision: '' | 'kept' | 'removed'; reason: string }>({ decision: '', reason: '' })
+  // Without triage nobody has confirmed allergies yet, so the doctor does it here with the patient.
+  const confirmsAllergies = !entry.triage
+  const [allergyStatus, setAllergyStatus] = useState<'' | AllergyStatus>('')
+  const [allergyDetails, setAllergyDetails] = useState('')
+  const confirmation = confirmsAllergies && allergyStatus ? { status: allergyStatus, details: allergyDetails.trim() } : undefined
+  const allergyError = confirmsAllergies ? allergyConfirmationError(allergyStatus, allergyDetails) : null
+  const discrepancy = patient
+    ? visitAllergyOutcome({ allergyStatus: patient.allergyStatus, allergy: patient.allergy }, entry.allergyDiscrepancy, confirmation).discrepancy
+    : null
+  const reviewError = discrepancy ? allergyReviewError(review.decision, review.reason) : null
+  const blocked = Boolean(allergyError || reviewError)
+  return <div className="modal-backdrop"><form className="modal-card modal-wide" role="dialog" aria-modal="true" aria-labelledby="consult-title" onSubmit={(event) => { event.preventDefault(); if (blocked) return; onComplete({ ...values, ...(confirmation ? { allergyConfirmation: confirmation } : {}), ...(discrepancy ? { allergyReview: { decision: review.decision === 'removed' ? 'removed' : 'kept', reason: review.reason.trim() } } : {}) }) }}>
     <div className="modal-header"><div><div className="section-kicker">QUEUE {entry.number} · DOCTOR</div><h2 id="consult-title">Complete visit</h2></div><button type="button" className="icon-button" aria-label="Close" onClick={onClose}><X size={18} /></button></div>
     <div className="linked-patient-banner"><strong>{patient?.name ?? entry.name}</strong><span>{patient?.patientNumber ?? 'Chart not linked'} · DOB {patient?.birthDate ?? 'not recorded'}</span><small>Allergies: {patient?.allergy ?? 'not recorded'}</small></div>
     {entry.triage && <div className="linked-triage"><strong>Attendant triage</strong><span>{entry.triage.complaint}</span><small>{entry.triage.notes} {entry.triage.bloodPressure && `· BP ${entry.triage.bloodPressure}`} {entry.triage.temperature && `· ${entry.triage.temperature}°C`} {entry.triage.weight && `· ${entry.triage.weight} kg`}</small></div>}
+    {!entry.triage && (entry.reportedReason || entry.reportedSymptoms) && <div className="linked-triage"><strong>Patient’s own words at check-in</strong><span>{entry.reportedReason || 'No reason given.'}</span><small>{entry.reportedSymptoms || 'No description given.'}</small></div>}
     <label className="role-confirm"><input type="checkbox" required checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} />I confirmed the patient identity and reviewed the allergy information.</label>
+    {confirmsAllergies && <fieldset className="allergy-review">
+      <legend>Allergy confirmation</legend>
+      <p>The patient reported <strong>{entry.reportedAllergyStatus === 'known' ? `known allergies: ${entry.reportedAllergy || 'no details given'}` : entry.reportedAllergyStatus === 'none' ? 'no known allergies' : 'allergies not yet known'}</strong> at check-in. Confirm with the patient.</p>
+      <Field label="Confirmed allergy status" required><select required value={allergyStatus} onChange={(event) => { setAllergyStatus(event.target.value as '' | AllergyStatus); if (event.target.value !== 'known') setAllergyDetails('') }}><option value="">Review and select a status...</option><option value="unknown">Unknown / not confirmed</option><option value="none">No known allergies</option><option value="known">Known allergies</option></select></Field>
+      {allergyStatus === 'known' && <Field label="Confirmed allergies" required><input required value={allergyDetails} onChange={(event) => setAllergyDetails(event.target.value)} /></Field>}
+    </fieldset>}
+    {discrepancy && <fieldset className="allergy-review">
+      <legend>Allergy difference to review</legend>
+      <p>The chart lists <strong>{discrepancy.documentedAllergy}</strong>. The patient reported <strong>{discrepancy.reportedStatus === 'none' ? 'no known allergies' : 'unknown allergies'}</strong>. The documented allergy stays until you decide.</p>
+      <label className="role-confirm"><input type="radio" name="allergy-review" checked={review.decision === 'kept'} onChange={() => setReview({ decision: 'kept', reason: '' })} />Keep documented allergy ({discrepancy.documentedAllergy})</label>
+      <label className="role-confirm"><input type="radio" name="allergy-review" checked={review.decision === 'removed'} onChange={() => setReview({ decision: 'removed', reason: review.reason })} />Remove documented allergy after clinical review</label>
+      {review.decision === 'removed' && <Field label="Reason for removing the documented allergy" required><textarea required value={review.reason} onChange={(event) => setReview({ decision: 'removed', reason: event.target.value })} /></Field>}
+    </fieldset>}
+    {entry.reportedSymptoms && <small className="modal-note">Pre-filled from what the patient wrote at check-in. Edit or replace it after you have asked them.</small>}
     <div className="form-row"><Field label="Symptoms"><textarea value={values.symptoms} onChange={(event) => update('symptoms', event.target.value)} /></Field><Field label="Signs"><textarea value={values.signs} onChange={(event) => update('signs', event.target.value)} /></Field></div>
     <Field label="Assessment / diagnosis" required><input required value={values.diagnosis} onChange={(event) => update('diagnosis', event.target.value)} /></Field>
     <Field label="Consultation notes" required><textarea required value={values.notes} onChange={(event) => update('notes', event.target.value)} /></Field>
     <details className="demo-prescription-fields"><summary>Add prescription to this encounter (optional draft)</summary><div className="form-row"><Field label="Medication"><input value={values.medication} onChange={(event) => update('medication', event.target.value)} /></Field><Field label="Strength"><input value={values.strength} onChange={(event) => update('strength', event.target.value)} /></Field></div><Field label="Directions"><textarea value={values.instructions} onChange={(event) => update('instructions', event.target.value)} /></Field><Field label="Duration"><input value={values.duration} onChange={(event) => update('duration', event.target.value)} /></Field><small>Saved as a demo draft linked to this encounter; not a finalized prescription.</small></details>
-    <div className="modal-footer"><button type="button" className="button button-secondary" onClick={onClose}>Continue later</button><button className="button button-primary" type="submit"><Check size={16} />Save visit to patient history</button></div>
+    <div className="modal-footer"><button type="button" className="button button-secondary" onClick={onClose}>Continue later</button><button className="button button-primary" type="submit" disabled={blocked}><Check size={16} />Save visit to patient history</button></div>
   </form></div>
 }
 
@@ -893,12 +1174,6 @@ function AppointmentRow({ appointment, patient, onClick }: { appointment: Appoin
   return <button className="appointment-row" onClick={onClick}><span className="appointment-time"><strong>{formatTime(appointment.time)}</strong><i /></span><Avatar patient={patient} /><span className="appointment-info"><strong>{patient.name}</strong><small>{appointment.reason}</small></span><StatusBadge status={appointment.status} /><ChevronRight size={16} className="row-chevron" /></button>
 }
 
-function formatTime(value: string) {
-  const [hours, minutes] = value.split(':').map(Number)
-  const suffix = hours >= 12 ? 'PM' : 'AM'
-  return `${hours % 12 || 12}:${String(minutes).padStart(2, '0')} ${suffix}`
-}
-
 function toMinutes(value: string) {
   const [hours, minutes] = value.split(':').map(Number)
   return hours * 60 + minutes
@@ -936,14 +1211,7 @@ function PatientsPage({ patients, onOpenPatient, onNewPatient }: { patients: Pat
       document.removeEventListener('keydown', closeOnEscape)
     }
   }, [filtersOpen])
-  const filteredPatients = patients.filter((patient) => {
-    const matchesQuery = `${patient.name} ${patient.patientNumber} ${patient.phone} ${patient.email}`.toLowerCase().includes(query.trim().toLowerCase())
-    const matchesAllergy = allergyFilter === 'all'
-      || allergyFilter === 'known' && patient.allergyStatus === 'known'
-      || allergyFilter === 'none' && patient.allergyStatus === 'none'
-      || allergyFilter === 'unrecorded' && patient.allergyStatus === 'unknown'
-    return matchesQuery && matchesAllergy
-  })
+  const filteredPatients = filterPatients(patients, query, allergyFilter)
   const orderedPatients = filter === 'recent'
     ? [...filteredPatients].sort((a, b) => b.joined.localeCompare(a.joined))
     : [...filteredPatients].sort((a, b) => a.name.localeCompare(b.name))
@@ -993,7 +1261,7 @@ function PatientChart({ patient, tab, onTabChange, onBack, onUpdate, onAddRecord
 
   function saveRecord(event: FormEvent) {
     event.preventDefault()
-    if (!signs.trim() && !symptoms.trim() && !diagnosis.trim() && !patient.notes.trim()) {
+    if (!hasEncounterContent({ signs, symptoms, diagnosis, liveNotes: patient.notes })) {
       onToast('Add a note, signs, symptoms, or diagnosis before saving.')
       return
     }
@@ -1017,8 +1285,9 @@ function PatientChart({ patient, tab, onTabChange, onBack, onUpdate, onAddRecord
     if (!file) return
     setUploadError('')
     setReviewDocument(null)
-    if (file.size > 25 * 1024 * 1024) {
-      setUploadError('File exceeds 25MB limit.')
+    const sizeError = documentSizeError(file.size)
+    if (sizeError) {
+      setUploadError(sizeError)
       return
     }
     setUploading(true)
@@ -1027,15 +1296,10 @@ function PatientChart({ patient, tab, onTabChange, onBack, onUpdate, onAddRecord
       form.append('file', file)
       const response = await fetch('/api/documents/parse', { method: 'POST', body: form })
       const result: unknown = await response.json()
-      if (!response.ok) {
-        const detail = typeof result === 'object' && result !== null && 'detail' in result && typeof result.detail === 'string' ? result.detail : 'Unable to parse document.'
-        throw new Error(detail)
-      }
-      if (typeof result !== 'object' || result === null || !('filename' in result) || typeof result.filename !== 'string'
-        || !('file_type' in result) || typeof result.file_type !== 'string' || !('page_count' in result) || typeof result.page_count !== 'number'
-        || !('ocr_pages_used' in result) || !Array.isArray(result.ocr_pages_used) || !result.ocr_pages_used.every((page) => Number.isInteger(page))
-        || !('text' in result) || typeof result.text !== 'string') throw new Error('The parser returned an invalid response.')
-      setReviewDocument({ filename: result.filename, fileType: result.file_type, pageCount: result.page_count, ocrPagesUsed: result.ocr_pages_used as number[], text: result.text })
+      if (!response.ok) throw new Error(parserErrorMessage(result))
+      const parsed = parsedDocument(result)
+      if (!parsed) throw new Error('The parser returned an invalid response.')
+      setReviewDocument(parsed)
     } catch (error) {
       setUploadError(error instanceof Error ? error.message : 'Unable to parse document.')
     } finally {
@@ -1044,8 +1308,9 @@ function PatientChart({ patient, tab, onTabChange, onBack, onUpdate, onAddRecord
   }
 
   function saveReviewedDocument() {
-    if (!reviewDocument || !reviewDocument.text.trim()) {
-      setUploadError('Review the extracted text before saving. The text cannot be empty.')
+    const textError = reviewedTextError(reviewDocument?.text ?? '')
+    if (!reviewDocument || textError) {
+      setUploadError(textError ?? 'No extracted document is open for review.')
       return
     }
     onAddDocument(reviewDocument)
@@ -1122,17 +1387,13 @@ function PrescriptionPrint({ prescription, patient }: { prescription: Prescripti
   return <div className="prescription-print" id="print-prescription"><div className="print-clinic"><span className="print-logo"><Activity size={17} /></span><span><strong>Northstar Clinic</strong><small>Care with clarity · DEMO</small></span><div><strong>Rx · DRAFT</strong><small>{shortDate(prescription.date)}</small></div></div><div className="print-rule" /><p className="draft-print-notice">DEMO DRAFT — not a finalized prescription</p><div className="print-patient"><strong>Patient</strong><span>{patient.name} · {ageFromBirthDate(patient.birthDate)} years · {patient.patientNumber}</span></div><div className="print-medication"><span className="rx-symbol">℞</span><div><strong>{prescription.medication} {prescription.strength}</strong><p>{prescription.instructions}</p>{prescription.duration && <small>Duration: {prescription.duration}</small>}{prescription.notes && <small>Note: {prescription.notes}</small>}</div></div><div className="print-signature"><span>{clinicianName}</span><small>Sample identity · not authenticated</small></div></div>
 }
 
-function AppointmentsPage({ appointments, patients, onOpenPatient, onNewAppointment }: { appointments: Appointment[]; patients: Patient[]; onOpenPatient: (id: string) => void; onNewAppointment: () => void }) {
+function AppointmentsPage({ appointments, patients, onOpenPatient, onNewAppointment, acceptingDates, onToggleOnline }: { appointments: Appointment[]; patients: Patient[]; onOpenPatient: (id: string) => void; onNewAppointment: () => void; acceptingDates: string[]; onToggleOnline: (date: string) => void }) {
   const [anchorDate, setAnchorDate] = useState(dateKey(new Date()))
+  const [onlineDay, setOnlineDay] = useState(dateKey(new Date()))
+  const today = dateKey(new Date())
+  const onlineDayAccepting = acceptingDates.includes(onlineDay)
   const [view, setView] = useState<'week' | 'day'>('week')
-  const days = useMemo(() => {
-    const anchor = new Date(`${anchorDate}T12:00:00`)
-    if (view === 'day') return [anchor]
-    const monday = new Date(anchor)
-    const weekday = (anchor.getDay() + 6) % 7
-    monday.setDate(anchor.getDate() - weekday)
-    return Array.from({ length: 5 }, (_, index) => { const date = new Date(monday); date.setDate(monday.getDate() + index); return date })
-  }, [anchorDate, view])
+  const days = useMemo(() => visibleDays(anchorDate, view), [anchorDate, view])
   const rangeLabel = view === 'day'
     ? fullDate(dateKey(days[0]))
     : `${new Intl.DateTimeFormat('en', { month: 'short', day: 'numeric' }).format(days[0])} – ${new Intl.DateTimeFormat('en', { month: 'short', day: 'numeric', year: 'numeric' }).format(days[4])}`
@@ -1145,6 +1406,13 @@ function AppointmentsPage({ appointments, patients, onOpenPatient, onNewAppointm
   }
   return <div className="page-wrap calendar-page">
     <div className="page-heading-row"><div><div className="eyebrow">SCHEDULING</div><h1>Appointments</h1><p>Coordinate the clinic day and keep every visit on track.</p></div><button className="button button-primary" onClick={onNewAppointment}><CalendarPlus size={16} />Book appointment</button></div>
+    <section className="surface online-booking-card" aria-label="Online booking">
+      <div className="online-booking-copy"><div className="section-kicker">ONLINE BOOKING</div><h2>Accept online appointments</h2><p>{onlineDayAccepting ? `Patients can book open times on ${fullDate(onlineDay)}.` : `Patients can see the booked times on ${fullDate(onlineDay)}, but cannot book online until you accept.`}</p></div>
+      <div className="online-booking-controls">
+        <label className="online-booking-date"><span>Online booking date</span><input type="date" min={today} max={dateKey(addDays(new Date(), ONLINE_BOOKING_DAYS))} value={onlineDay} onChange={(event) => { if (isDateKey(event.target.value)) setOnlineDay(event.target.value) }} /></label>
+        {onlineDay >= today && <button className={`button ${onlineDayAccepting ? 'button-secondary' : 'button-primary'}`} onClick={() => onToggleOnline(onlineDay)}>{onlineDayAccepting ? 'Stop online bookings for this day' : 'Accept online bookings for this day'}</button>}
+      </div>
+    </section>
     <section className="surface calendar-surface"><div className="calendar-toolbar"><div className="calendar-title"><h2>{view === 'week' ? 'Work week' : 'Day schedule'}</h2><span>{rangeLabel}</span></div><div className="calendar-actions"><button className="button button-soft today-button" onClick={() => setAnchorDate(dateKey(new Date()))}>Today</button><div className="calendar-arrows"><button className="icon-button" aria-label={view === 'week' ? 'Previous week' : 'Previous day'} onClick={() => moveCalendar(-1)}><ChevronLeft size={17} /></button><button className="icon-button" aria-label={view === 'week' ? 'Next week' : 'Next day'} onClick={() => moveCalendar(1)}><ChevronRight size={17} /></button></div><select className="view-select" aria-label="Calendar view" value={view} onChange={(event) => setView(event.target.value as typeof view)}><option value="week">Work week</option><option value="day">Day</option></select></div></div>
       <div className="calendar-legend"><span><i className="legend-confirmed" />Confirmed</span><span><i className="legend-arrived" />Checked in</span><span><i className="legend-scheduled" />Scheduled</span></div>
       <div className="calendar-grid" style={{ '--day-count': days.length } as CSSProperties}>
@@ -1180,24 +1448,15 @@ function WalkInModal({ onClose, onCreate, submitLabel = 'Register & open chart' 
   }
   function submit(event: FormEvent) {
     event.preventDefault()
-    if (!form.name.trim()) { setError('Enter the patient’s name to continue.'); return }
-    if (!form.birthDate) { setError('Enter the patient’s date of birth.'); return }
-    if (form.birthDate > dateKey(new Date())) { setError('Date of birth cannot be in the future.'); return }
-    if (!form.sex) { setError('Select the patient’s sex or choose not to disclose.'); return }
-    if (!form.allergyStatus) { setError('Record an allergy status before continuing.'); return }
-    if (form.allergyStatus === 'known' && !form.allergyDetails.trim()) { setError('Enter the known allergy or select another allergy status.'); return }
-    const allergy = form.allergyStatus === 'none'
-      ? 'No known allergies'
-      : form.allergyStatus === 'unknown'
-        ? 'Not recorded'
-        : form.allergyDetails.trim()
+    const message = registrationError(form, new Date())
+    if (message || form.allergyStatus === '') { setError(message ?? 'Record an allergy status before continuing.'); return }
     onCreate({
       name: form.name.trim(),
       birthDate: form.birthDate,
       sex: form.sex,
       phone: form.phone.trim(),
       email: form.email.trim(),
-      allergy,
+      allergy: allergyDescription(form.allergyStatus, form.allergyDetails),
       allergyStatus: form.allergyStatus,
     })
   }
@@ -1240,12 +1499,41 @@ function AppointmentModal({ patients, initialPatientId, onClose, onCreate }: { p
   }
   function submit(event: FormEvent) {
     event.preventDefault()
-    if (!form.patientId) { setError('Select a patient before booking.'); return }
     const message = onCreate({ ...form, reason: form.reason.trim() || 'Office visit', status: 'scheduled' })
     if (message) setError(message)
   }
   return <Modal onClose={onClose} eyebrow="SCHEDULING" title="Book an appointment" subtitle="Choose a patient and a time that works for the clinic." icon={<CalendarPlus size={18} />}>
-    <form onSubmit={submit} className="modal-form"><Field label="Patient" required><select id="appointment-patient" required value={form.patientId} onChange={(event) => updateForm({ patientId: event.target.value })}><option value="" disabled>Select a patient</option>{patients.map((patient) => <option key={patient.id} value={patient.id}>{patient.name} · {patient.patientNumber}</option>)}</select></Field><div className="form-row"><Field label="Date" required><input id="appointment-date" type="date" required min={dateKey(new Date())} value={form.date} onChange={(event) => updateForm({ date: event.target.value })} /></Field><Field label="Start time" required><select id="appointment-time" value={form.time} onChange={(event) => updateForm({ time: event.target.value })}>{Array.from({ length: 20 }, (_, index) => { const mins = 8 * 60 + index * 30; const time = `${String(Math.floor(mins / 60)).padStart(2, '0')}:${String(mins % 60).padStart(2, '0')}`; return <option key={time} value={time}>{formatTime(time)}</option> })}</select></Field></div><div className="form-row"><Field label="Visit length"><select id="appointment-duration" value={form.duration} onChange={(event) => updateForm({ duration: Number(event.target.value) })}><option value={30}>30 minutes</option><option value={45}>45 minutes</option><option value={60}>60 minutes</option></select></Field><Field label="Visit type"><input value={form.reason} onChange={(event) => updateForm({ reason: event.target.value })} placeholder="e.g. Follow-up" /></Field></div><div className="modal-clinician"><span className="avatar avatar-teal avatar-small">MR</span><span><small>Assigned clinician</small><strong>{clinicianName}</strong></span><CheckCircle2 size={16} /></div>{error && <p className="form-error" role="alert">{error}</p>}<div className="modal-actions"><button type="button" className="button button-secondary" onClick={onClose}>Cancel</button><button type="submit" className="button button-primary"><CalendarPlus size={15} />Confirm appointment</button></div></form>
+    <form onSubmit={submit} className="modal-form"><Field label="Patient" required><select id="appointment-patient" required value={form.patientId} onChange={(event) => updateForm({ patientId: event.target.value })}><option value="" disabled>Select a patient</option>{patients.map((patient) => <option key={patient.id} value={patient.id}>{patient.name} · {patient.patientNumber}</option>)}</select></Field><div className="form-row"><Field label="Date" required><input id="appointment-date" type="date" required min={dateKey(new Date())} value={form.date} onChange={(event) => updateForm({ date: event.target.value })} /></Field><Field label="Start time" required><select id="appointment-time" value={form.time} onChange={(event) => updateForm({ time: event.target.value })}>{appointmentStartTimes().map((time) => <option key={time} value={time}>{formatTime(time)}</option>)}</select></Field></div><div className="form-row"><Field label="Visit length"><select id="appointment-duration" value={form.duration} onChange={(event) => updateForm({ duration: Number(event.target.value) })}><option value={30}>30 minutes</option><option value={45}>45 minutes</option><option value={60}>60 minutes</option></select></Field><Field label="Visit type"><input value={form.reason} onChange={(event) => updateForm({ reason: event.target.value })} placeholder="e.g. Follow-up" /></Field></div><div className="modal-clinician"><span className="avatar avatar-teal avatar-small">MR</span><span><small>Assigned clinician</small><strong>{clinicianName}</strong></span><CheckCircle2 size={16} /></div>{error && <p className="form-error" role="alert">{error}</p>}<div className="modal-actions"><button type="button" className="button button-secondary" onClick={onClose}>Cancel</button><button type="submit" className="button button-primary"><CalendarPlus size={15} />Confirm appointment</button></div></form>
+  </Modal>
+}
+
+// Doctor or attendant adds a patient to today's queue without the QR. Emergencies are flagged urgent and are called first.
+function ManualQueueModal({ onClose, onCreate }: { onClose: () => void; onCreate: (values: ManualQueueForm) => string }) {
+  const [form, setForm] = useState<ManualQueueForm>({ name: '', birthDate: '', sex: '', phone: '', reason: '', urgent: false })
+  const [error, setError] = useState('')
+  function updateForm(update: Partial<ManualQueueForm>) {
+    setForm((current) => ({ ...current, ...update }))
+    if (error) setError('')
+  }
+  function submit(event: FormEvent) {
+    event.preventDefault()
+    const message = onCreate(form)
+    if (message) setError(message)
+  }
+  return <Modal onClose={onClose} eyebrow="QUEUE" title="Add patient to today’s queue" subtitle="Use this when the QR cannot be used, for example in an emergency. It works even when check-in is closed." icon={<UserRoundPlus size={18} />}>
+    <form onSubmit={submit} className="modal-form">
+      <label className="role-confirm manual-urgent"><input type="checkbox" checked={form.urgent} onChange={(event) => updateForm({ urgent: event.target.checked })} />Urgent or emergency. The doctor sees this patient before everyone else.</label>
+      <Field label="Patient name" required><input autoFocus required maxLength={160} value={form.name} onChange={(event) => updateForm({ name: event.target.value })} placeholder="First and last name" /></Field>
+      <div className="form-row">
+        <Field label="Date of birth" required hint="Best estimate if unknown"><input aria-label="Date of birth" type="date" required max={dateKey(new Date())} value={form.birthDate} onChange={(event) => updateForm({ birthDate: event.target.value })} /></Field>
+        <Field label="Sex" required><select required value={form.sex} onChange={(event) => updateForm({ sex: event.target.value })}><option value="">Select...</option><option>Female</option><option>Male</option><option>Intersex</option><option>Other</option><option>Unknown</option><option>Prefer not to say</option></select></Field>
+      </div>
+      <Field label="Phone" hint="Optional"><input type="tel" maxLength={40} value={form.phone} onChange={(event) => updateForm({ phone: event.target.value })} /></Field>
+      <Field label={form.urgent ? 'Why is this urgent?' : 'Reason for visit'} required={form.urgent} hint={form.urgent ? undefined : 'Optional'}><input maxLength={REASON_MAX_LENGTH} value={form.reason} onChange={(event) => updateForm({ reason: event.target.value })} placeholder={form.urgent ? 'For example: chest pain, difficulty breathing' : 'For example: headache since yesterday'} /></Field>
+      <p className="modal-note">Allergies are confirmed with the patient at triage or in the consultation. A chart is created if this patient has none.</p>
+      {error && <p className="form-error" role="alert">{error}</p>}
+      <div className="modal-actions"><button type="button" className="button button-secondary" onClick={onClose}>Cancel</button><button type="submit" className="button button-primary"><UserRoundPlus size={15} />{form.urgent ? 'Add as urgent' : 'Add to queue'}</button></div>
+    </form>
   </Modal>
 }
 
