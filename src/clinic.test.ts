@@ -51,6 +51,19 @@ describe('stored demo data validation', () => {
     expect(parseStoredPatients([])).toEqual([])
   })
 
+  it('accepts new document records and migrates older charts to an empty document list', () => {
+    const document = { id: 'doc-1', filename: 'lab.pdf', fileType: 'pdf', pageCount: 2, ocrPagesUsed: [2], extractedAt: '2026-11-14T09:00:00.000Z', text: 'Reviewed result' }
+    expect(parseStoredPatients([patient({ documents: [document] })])?.[0].documents).toEqual([document])
+    const legacy: Record<string, unknown> = { ...patient() }
+    delete legacy.documents
+    expect(parseStoredPatients([legacy])?.[0].documents).toEqual([])
+  })
+
+  it('rejects invalid saved document metadata rather than dropping a chart', () => {
+    expect(parseStoredPatients([patient({ documents: [{ id: 'bad', filename: 'scan.pdf', fileType: 'pdf', pageCount: 0, ocrPagesUsed: [], extractedAt: 'today', text: 'x' }] })])).toBeNull()
+    expect(parseStoredPatients([patient({ documents: [{ id: 'bad', filename: 'scan.pdf', fileType: 'pdf', pageCount: 1, ocrPagesUsed: ['one'], extractedAt: 'today', text: 'x' } as never] })])).toBeNull()
+  })
+
   it.each([
     ['No known allergies', 'none'], ['Not recorded', 'unknown'], ['Latex', 'known'],
   ])('migrates the legacy gender and inferred allergy status for %s', (allergy, status) => {
