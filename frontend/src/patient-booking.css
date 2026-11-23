@@ -1,0 +1,94 @@
+/* Patient online booking (demo) and the doctor's online booking panel. */
+.patient-booking-card {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.patient-booking-date {
+  display: grid;
+  gap: 4px;
+  max-width: 220px;
+  font-size: 0.9rem;
+}
+
+.patient-booking-status {
+  margin: 0;
+  font-size: 0.92rem;
+}
+
+.patient-slot-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 8px;
+}
+
+.patient-slot {
+  border: 1px solid #c9d8da;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 8px 10px;
+  text-align: left;
+  font-size: 0.88rem;
+  cursor: pointer;
+}
+
+.patient-slot[aria-pressed='true'] {
+  border-color: #2f7f86;
+  background: #e8f4f4;
+}
+
+.patient-slot:disabled {
+  cursor: not-allowed;
+  color: #6b7c80;
+  background: #f4f6f6;
+}
+
+.patient-slot-booked:disabled {
+  text-decoration: line-through;
+}
+
+.patient-booking-form {
+  display: grid;
+  gap: 8px;
+  max-width: 480px;
+}
+
+.patient-upcoming {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.patient-upcoming li {
+  display: grid;
+  gap: 2px;
+  margin-bottom: 6px;
+}
+
+.online-booking-card {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  justify-content: space-between;
+  align-items: flex-end;
+  padding: 16px 18px;
+  margin-bottom: 14px;
+}
+
+.online-booking-copy p {
+  margin: 4px 0 0;
+  font-size: 0.92rem;
+}
+
+.online-booking-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: flex-end;
+}
+
+.online-booking-date {
+  display: grid;
+  gap: 4px;
+  font-size: 0.85rem;
+}

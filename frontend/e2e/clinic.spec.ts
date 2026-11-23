@@ -1,34 +1,5 @@
-import { test as base, expect, type Page } from '@playwright/test'
 import { readFile } from 'node:fs/promises'
-
-const test = base.extend<{ runtimeErrors: void }>({
-  runtimeErrors: [async ({ page }, use) => {
-    const errors: string[] = []
-    page.on('pageerror', (error) => errors.push(error.message))
-    await use()
-    expect(errors, 'The browser should have no unhandled application errors').toEqual([])
-  }, { auto: true }],
-})
-
-async function navigate(page: Page, name: RegExp) {
-  const button = page.getByRole('navigation', { name: 'Main navigation' }).getByRole('button', { name })
-  const mobileMenu = page.getByRole('button', { name: 'Open navigation' })
-  if (await mobileMenu.isVisible()) await mobileMenu.click()
-  await button.click()
-}
-
-async function openChart(page: Page, name: string) {
-  const globalSearch = page.getByRole('textbox', { name: 'Search patients', exact: true })
-  if (await globalSearch.isVisible()) {
-    await globalSearch.fill(name)
-    await page.locator('.search-popover').getByRole('button', { name: new RegExp(name) }).click()
-  } else {
-    await navigate(page, /^Patients/)
-    await page.getByPlaceholder('Search by name, patient ID, or phone').fill(name)
-    await page.getByRole('row').filter({ hasText: name }).click()
-  }
-  await expect(page.getByRole('heading', { name, exact: true })).toBeVisible()
-}
+import { expect, navigate, openChart, test } from './support'
 
 test.beforeEach(async ({ page }) => {
   // Keep seed appointments on a Monday and DOB/calendar assertions stable.
@@ -153,23 +124,20 @@ test('queue deduplicates check-ins, serves patients, persists and rejects unavai
   await expect(page.getByRole('status')).toContainText('001')
   await page.getByRole('button', { name: 'Back to clinic' }).click()
   await expect(page.locator('.queue-table-row')).toHaveCount(1)
-  await expect(page.getByRole('button', { name: 'Call next', exact: true })).toBeDisabled()
-  await page.getByRole('button', { name: 'Record triage' }).click()
-  await page.getByLabel(/^Chief complaint/).fill('Headache')
-  await page.getByLabel(/^Initial notes/).fill('No warning symptoms reported')
-  await page.getByLabel(/^Confirmed allergy status/).selectOption('none')
-  await page.getByRole('checkbox', { name: /confirmed their identity/ }).check()
-  await page.getByRole('button', { name: 'Save triage & hand off' }).click()
+  // Triage is optional: the patient is already waiting for the doctor.
+  await expect(page.getByRole('button', { name: 'Call next', exact: true })).toBeEnabled()
+  await expect(page.getByRole('button', { name: 'Record triage' })).toHaveCount(0)
   await expect(page.locator('.queue-table-row')).toContainText('Ready for doctor')
   await page.getByRole('button', { name: 'Start consultation' }).click()
   await page.getByRole('checkbox', { name: /reviewed the allergy information/ }).check()
+  await page.getByLabel(/^Confirmed allergy status/).selectOption('none')
   await page.getByLabel(/^Assessment \/ diagnosis/).fill('Tension headache')
   await page.getByLabel(/^Consultation notes/).fill('Synthetic demo consultation note')
   await page.getByRole('button', { name: 'Save visit to patient history' }).click()
   await expect(page.locator('.queue-table-row')).toContainText('Visit complete')
   await page.getByRole('button', { name: 'View history' }).click()
   await expect(page.getByRole('heading', { name: 'Medical history', exact: true })).toBeVisible()
-  await expect(page.locator('.timeline')).toContainText('Headache')
+  await expect(page.locator('.timeline')).toContainText('Tension headache')
   await navigate(page, /^Daily queue/)
   await page.getByRole('button', { name: 'Pause check-in' }).click()
   await page.getByRole('button', { name: 'Preview patient check-in', exact: true }).click()

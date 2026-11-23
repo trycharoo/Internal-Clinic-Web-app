@@ -24,4 +24,5 @@ export const storageKeys = {
   patients: 'northstar-demo-patients-v1',
   appointments: 'northstar-demo-appointments-v1',
   queue: 'northstar-demo-daily-queue-v1',
+  onlineDates: 'northstar-demo-online-booking-v1',
 }

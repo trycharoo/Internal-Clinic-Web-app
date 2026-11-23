@@ -95,13 +95,13 @@ Select the matching role and enter its public sample credentials:
 
 Email comparison ignores case and surrounding whitespace; passwords must match exactly. Incorrect credentials or a role mismatch stay on `/login`. **Explore demo workspace** is an explicit shortcut to the Doctor sandbox.
 
-These are public demo credentials, not real accounts. Doctor opens the clinical workspace; Attendant opens reception, registration, booking, triage, and existing-intake controls; Patient opens welcome/check-in guidance without staff or other-patient data. The demo selection exists only in memory: refreshing or opening a demo route directly without an active selection returns to `/login`. **Log in as** returns to `/login`; public `?queue=` check-in links remain accountless. The credentials and demo selection are not saved in browser storage, while synthetic clinic records retain their existing browser-local persistence.
+These are public demo credentials, not real accounts. Doctor opens the clinical workspace; Attendant opens reception, registration, booking, optional triage, and existing-intake controls; Patient opens welcome/check-in guidance without staff or other-patient data. The demo selection exists only in memory: refreshing or opening a demo route directly without an active selection returns to `/login`. **Log in as** returns to `/login`; public `?queue=` check-in links remain accountless. The credentials and demo selection are not saved in browser storage, while synthetic clinic records retain their existing browser-local persistence.
 
 **Change cover** previews your own JPEG, PNG, or WebP up to 5 MiB until refresh; **Reset cover** restores the bundled image. See the [hero asset guide](frontend/public/images/README.md) to replace the default cover.
 
 ## Requirements and workflow
 
-The [software requirements specification](docs/SRS.md) defines the proposed walk-in workflow: reception confirms or registers a patient, records triage, queues the visit for the doctor, and retains the consultation and prescriptions in the patient history. It includes requirement IDs, acceptance scenarios, and a matrix showing which behaviors exist in the demo, which are represented only in SQL, and which need backend implementation. The document parser's service contract and deployment notes are in [services/doc-parser](services/doc-parser/README.md).
+The [software requirements specification](docs/SRS.md) defines the proposed walk-in workflow: reception confirms or registers a patient, optionally records triage, queues the visit for the doctor, and retains the consultation and prescriptions in the patient history. It includes requirement IDs, acceptance scenarios, and a matrix showing which behaviors exist in the demo, which are represented only in SQL, and which need backend implementation. The document parser's service contract and deployment notes are in [services/doc-parser](services/doc-parser/README.md).
 
 The [Philippines EHR deployment readiness plan](docs/DEPLOYMENT_READINESS.md) reviews current blockers, adds clinical and privacy standards as release criteria, and orders the work needed before the clinic can use real patient records.
 
@@ -135,6 +135,7 @@ See [testing and delivery](docs/TESTING.md) for commands, reports, CI jobs, and 
 - The backend currently provides only the document-parser proxy. PostgreSQL and Redis start for local development, but patient and visit screens do not use them.
 - The document parser runs on the supplied InstaBox and may pause under its free-plan runtime limits. Its URL can wake an idle box, but this is a trial integration, not an always-on production deployment.
 - Patient, appointment, and queue demo data is stored in browser `localStorage`. Queue check-ins do not synchronize between different browsers or devices.
+- Patients can book online in the demo Patient view on days the doctor has opened, but that view is signed in with a sample account. The sign-in is not authentication, and patients cannot yet cancel or reschedule online.
 - `db/init.sql` runs when Docker creates a new, empty PostgreSQL data volume. Existing volumes are not reinitialized on subsequent starts.
 - Public sample credentials select browser-only role views; real authentication, server-enforced roles, server-backed triage/visit transitions, and audit history remain planned. The local connected encounter and its prescription output remain a demo draft, not a finalized clinical record.
 
