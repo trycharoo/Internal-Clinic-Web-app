@@ -20,6 +20,7 @@ export default defineConfig({
         statements: 65,
         functions: 60,
         'src/clinic.ts': { lines: 100, branches: 100, statements: 100, functions: 100 },
+        'src/workflow.ts': { lines: 100, branches: 100, statements: 100, functions: 100 },
       },
     },
   },
