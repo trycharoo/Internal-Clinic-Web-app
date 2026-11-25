@@ -131,25 +131,6 @@ def test_encrypted_and_empty_pdfs_return_422_and_cleanup_temp_upload(monkeypatch
     )
     assert response.status_code == 422
     assert response.json() == {"detail": "Unable to parse document"}
-
-
-def test_real_ocr_and_poppler_smoke(monkeypatch):
-    if not shutil.which("tesseract") or not shutil.which("pdftoppm"):
-        if os.getenv("CI"):
-            pytest.fail("tesseract and pdftoppm must be installed in CI")
-        pytest.skip("tesseract/pdftoppm not installed locally")
-    monkeypatch.setenv("APP_API_KEY", "a" * 32)
-    client = TestClient(parser.app)
-    headers = {"X-API-Key": "a" * 32}
-
-    image_resp = client.post("/parse", headers=headers, files={"file": ("scan.png", png_bytes((32, 32)), "image/png")})
-    assert image_resp.status_code == 200
-    assert image_resp.json()["file_type"] == "png"
-
-    pdf_resp = client.post("/parse", headers=headers, files={"file": ("scan.pdf", pdf_bytes(), "application/pdf")})
-    assert pdf_resp.status_code == 200
-    assert pdf_resp.json()["page_count"] == 1
-    assert pdf_resp.json()["ocr_pages_used"] == [1]
     assert list(tmp_path.iterdir()) == []
 
 
@@ -271,25 +252,6 @@ def test_corrupt_document_is_422_and_temp_upload_is_removed(monkeypatch, tmp_pat
     )
     assert response.status_code == 422
     assert response.json() == {"detail": "Unable to parse document"}
-
-
-def test_real_ocr_and_poppler_smoke(monkeypatch):
-    if not shutil.which("tesseract") or not shutil.which("pdftoppm"):
-        if os.getenv("CI"):
-            pytest.fail("tesseract and pdftoppm must be installed in CI")
-        pytest.skip("tesseract/pdftoppm not installed locally")
-    monkeypatch.setenv("APP_API_KEY", "a" * 32)
-    client = TestClient(parser.app)
-    headers = {"X-API-Key": "a" * 32}
-
-    image_resp = client.post("/parse", headers=headers, files={"file": ("scan.png", png_bytes((32, 32)), "image/png")})
-    assert image_resp.status_code == 200
-    assert image_resp.json()["file_type"] == "png"
-
-    pdf_resp = client.post("/parse", headers=headers, files={"file": ("scan.pdf", pdf_bytes(), "application/pdf")})
-    assert pdf_resp.status_code == 200
-    assert pdf_resp.json()["page_count"] == 1
-    assert pdf_resp.json()["ocr_pages_used"] == [1]
     assert list(tmp_path.iterdir()) == []
 
 
@@ -469,25 +431,6 @@ def test_pdf_rendered_image_closed_when_ocr_fails(monkeypatch):
     )
     assert response.status_code == 422
     assert response.json() == {"detail": "Unable to parse document"}
-
-
-def test_real_ocr_and_poppler_smoke(monkeypatch):
-    if not shutil.which("tesseract") or not shutil.which("pdftoppm"):
-        if os.getenv("CI"):
-            pytest.fail("tesseract and pdftoppm must be installed in CI")
-        pytest.skip("tesseract/pdftoppm not installed locally")
-    monkeypatch.setenv("APP_API_KEY", "a" * 32)
-    client = TestClient(parser.app)
-    headers = {"X-API-Key": "a" * 32}
-
-    image_resp = client.post("/parse", headers=headers, files={"file": ("scan.png", png_bytes((32, 32)), "image/png")})
-    assert image_resp.status_code == 200
-    assert image_resp.json()["file_type"] == "png"
-
-    pdf_resp = client.post("/parse", headers=headers, files={"file": ("scan.pdf", pdf_bytes(), "application/pdf")})
-    assert pdf_resp.status_code == 200
-    assert pdf_resp.json()["page_count"] == 1
-    assert pdf_resp.json()["ocr_pages_used"] == [1]
     with pytest.raises(ValueError, match="closed"):
         rendered.getpixel((0, 0))
 
@@ -566,25 +509,6 @@ def test_truncated_webp_headers_rejected_before_decoder_allocation(monkeypatch, 
     )
     assert response.status_code == 422
     assert response.json() == {"detail": "Unable to parse document"}
-
-
-def test_real_ocr_and_poppler_smoke(monkeypatch):
-    if not shutil.which("tesseract") or not shutil.which("pdftoppm"):
-        if os.getenv("CI"):
-            pytest.fail("tesseract and pdftoppm must be installed in CI")
-        pytest.skip("tesseract/pdftoppm not installed locally")
-    monkeypatch.setenv("APP_API_KEY", "a" * 32)
-    client = TestClient(parser.app)
-    headers = {"X-API-Key": "a" * 32}
-
-    image_resp = client.post("/parse", headers=headers, files={"file": ("scan.png", png_bytes((32, 32)), "image/png")})
-    assert image_resp.status_code == 200
-    assert image_resp.json()["file_type"] == "png"
-
-    pdf_resp = client.post("/parse", headers=headers, files={"file": ("scan.pdf", pdf_bytes(), "application/pdf")})
-    assert pdf_resp.status_code == 200
-    assert pdf_resp.json()["page_count"] == 1
-    assert pdf_resp.json()["ocr_pages_used"] == [1]
 
 
 def test_unsupported_image_content_is_rejected_despite_supported_filename(monkeypatch):
