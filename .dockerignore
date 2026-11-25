@@ -1,0 +1,17 @@
+.git
+**/node_modules
+**/dist
+**/coverage
+**/playwright-report
+**/test-results
+.context
+.pnpm-store
+.env
+.env.*
+apps/doc-parser
+apps/api/db
+docs
+scripts
+mise.toml
+mise.local.toml
+.mise.local.toml

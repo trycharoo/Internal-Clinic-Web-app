@@ -1,5 +1,5 @@
--- Run against an isolated PostgreSQL 16 database initialized with db/init.sql:
--- psql -v ON_ERROR_STOP=1 -f db/tests/regression.sql
+-- Run against an isolated PostgreSQL 16 database initialized with apps/api/db/init.sql:
+-- psql -v ON_ERROR_STOP=1 -f apps/api/db/tests/regression.sql
 -- Fixtures and helper functions are rolled back, including on a failed assertion.
 \set ON_ERROR_STOP on
 BEGIN;

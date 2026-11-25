@@ -1,0 +1,21 @@
+{
+  "name": "internal-clinic-web-app",
+  "private": true,
+  "packageManager": "pnpm@12.18.0",
+  "engines": {
+    "node": "^22.22.2 || ^24.15.0 || >=26.0.0",
+    "pnpm": ">=12.0.0"
+  },
+  "scripts": {
+    "dev:frontend": "pnpm --filter @clinic/frontend dev",
+    "dev:api": "pnpm --filter @clinic/api dev",
+    "start:api": "pnpm --filter @clinic/api start",
+    "build": "pnpm -r --if-present build",
+    "typecheck": "pnpm -r --if-present typecheck",
+    "test": "pnpm -r --if-present test",
+    "test:frontend": "pnpm --filter @clinic/frontend test",
+    "test:coverage": "pnpm --filter @clinic/frontend test:coverage",
+    "test:e2e": "pnpm --filter @clinic/frontend test:e2e",
+    "test:api": "pnpm --filter @clinic/api test"
+  }
+}

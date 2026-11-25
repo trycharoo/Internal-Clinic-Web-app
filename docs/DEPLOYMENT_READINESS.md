@@ -8,9 +8,9 @@ Reviewed 2026-11-14 against the working [SRS](SRS.md), [testing guide](TESTING.m
 
 | Evidence | Current state | Why it blocks clinical use |
 | --- | --- | --- |
-| [Backend service](../docker-compose.yml) and [backend directory](../backend/.gitkeep) | Compose runs a placeholder; there is no application API. | The browser cannot enforce access, transactional workflows, or shared records. |
-| [Frontend state](../frontend/src/App.tsx) | Patients, appointments, and queue are stored in each browser's `localStorage`. | Another device lacks the same chart or queue; durable recovery and concurrent updates cannot be established. |
-| [SRS baseline](SRS.md) and [SQL schema](../db/init.sql) | No authenticated staff session, enforced role permissions, clinical audit, final prescription workflow, or versioned migrations. | A displayed doctor name or database role enum does not prove author identity or protect patient records. |
+| [API service](../docker-compose.yml) and [API app](../apps/api/server.mjs) | Compose runs a placeholder; there is no application API. | The browser cannot enforce access, transactional workflows, or shared records. |
+| [Frontend state](../apps/frontend/src/App.tsx) | Patients, appointments, and queue are stored in each browser's `localStorage`. | Another device lacks the same chart or queue; durable recovery and concurrent updates cannot be established. |
+| [SRS baseline](SRS.md) and [SQL schema](../apps/api/db/init.sql) | No authenticated staff session, enforced role permissions, clinical audit, final prescription workflow, or versioned migrations. | A displayed doctor name or database role enum does not prove author identity or protect patient records. |
 | [Testing guide](TESTING.md) | Unit, component, browser, PostgreSQL, stack, and image tests cover the demo. | They do not establish API authorization, cross-device consistency, recovery, or safe clinical operation. |
 
 The UI, initial relational constraints, synthetic fixtures, and CI checks are useful foundations. They should be retained and extended as the shared system is built.
@@ -27,7 +27,7 @@ For a credible pitch, use the reset control and the synthetic Philippine scenari
 
 The smallest real EHR pilot should complete one staff-assisted walk-in end to end: find or register the patient; confirm two identifiers, allergies, and current medicines; accept one linked arrival and visit; record triage; start an authenticated doctor consultation; finalize a reviewed note and prescription; and retain history with attributed corrections. The API, migrations, authorization, audit, backup/restore, downtime reconciliation, privacy decisions, and negative/concurrency tests remain required. Public QR intake, appointment priority/hold controls, Patient accounts/opening modals, multiple doctors, and external FHIR exchange may be staged later only after the first-release scope is explicitly updated in the SRS. If QR and holds are the pitch's main promise, include them in the first pilot instead of treating them as delivered by the current demo.
 
-Verification snapshot (2026-11-14): `npm run typecheck` passed; `npm run test:coverage` passed all **129** unit/component tests with **81.66%** line coverage and all configured coverage gates; and `npm run test:e2e` passed **16** desktop/mobile checks against a production build. This includes public sample-credential matching, role-specific browser views, routing/session boundaries, cover selection, and the local demo journey. These results do not establish real authentication or server authorization and do not alter the no-go decision for real records.
+Verification snapshot (2026-11-14, prior to the monorepo restructure): `npm run typecheck` passed; `npm run test:coverage` passed all **129** unit/component tests with **81.66%** line coverage and all configured coverage gates; and `npm run test:e2e` passed **16** desktop/mobile checks against a production build. This includes public sample-credential matching, role-specific browser views, routing/session boundaries, cover selection, and the local demo journey. These results do not establish real authentication or server authorization and do not alter the no-go decision for real records.
 
 ## Release sequence and evidence
 

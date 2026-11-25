@@ -17,7 +17,7 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-docker build --tag "$test_image" frontend
+docker build --file apps/frontend/Dockerfile --tag "$test_image" .
 docker run --detach --name "$test_container" --publish 127.0.0.1::8080 "$test_image" >/dev/null
 image_address=$(docker port "$test_container" 8080/tcp)
 

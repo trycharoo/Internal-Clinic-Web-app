@@ -10,56 +10,55 @@ This document is the source of check commands and prerequisites. Documentation-o
 
 ## Run the checks
 
-Use Node.js 22.22.2 or later in the Node 22 line, Node.js 24.15 or later in the Node 24 line, or Node.js 26+, matching `frontend/package.json`. Docker tests require a running Docker engine and Docker Compose v2.
+Use Node.js 22.22.2 or later in the Node 22 line, Node.js 24.15 or later in the Node 24 line, or Node.js 26+ with `pnpm` 12+, matching [`package.json`](../package.json) and [`apps/frontend/package.json`](../apps/frontend/package.json). Contributors using [`mise`](https://mise.jdx.dev/) can run `mise install` at the repository root (and inside `apps/doc-parser`) to match the CI-pinned Node.js, `pnpm`, `actionlint`, and Python 3.13 toolchain automatically. Docker tests require a running Docker engine and Docker Compose v2.
 
 From the repository root:
 
 ```sh
-cd frontend
-npm ci
-npm run typecheck
-npm run test:coverage
-npx playwright install chromium
-npm run test:e2e
-cd ..
+pnpm install --frozen-lockfile
+pnpm typecheck
+pnpm test:coverage
+pnpm --filter @clinic/frontend exec playwright install chromium
+pnpm test:e2e
 sh scripts/test-stack.sh
 sh scripts/test-image.sh
-npm test --prefix backend
-python3 -m pip install -r services/doc-parser/requirements-dev.txt
-python3 -m pytest services/doc-parser/test_app.py
+pnpm test:api
+actionlint -color
+sh -n scripts/test-stack.sh scripts/test-image.sh apps/doc-parser/install-debian.sh
+python3 -m pip install -r apps/doc-parser/requirements-dev.txt
+python3 -m pytest apps/doc-parser/test_app.py
 ```
 
-On Linux, install Chromium's operating-system dependencies with `npx playwright install --with-deps chromium` when needed. The browser suite builds the application and starts a production preview on port 4173; that port must be available. It fails if another process is already serving the configured port.
+On Linux, install Chromium's operating-system dependencies with `pnpm --filter @clinic/frontend exec playwright install --with-deps chromium` when needed. The browser suite builds the application and starts a production preview on port 4173; that port must be available. It fails if another process is already serving the configured port.
 
-For a shorter feedback loop:
+For a shorter feedback loop from the repository root:
 
 ```sh
-cd frontend
-npm test
-npm run test:watch
-npm run test:e2e -- --project=chromium
+pnpm test:frontend
+pnpm --filter @clinic/frontend test:watch
+pnpm test:e2e -- --project=chromium
 ```
 
-The image test accepts an optional image tag, for example `sh scripts/test-image.sh clinic-frontend:review`. It builds and serves a static frontend container and checks the delivered index/assets. The stack script uses a separate Compose project and disposable volumes, initializes PostgreSQL, runs SQL regression assertions, and checks the Redis/frontend services. Neither script should run against a real patient database.
+The image test accepts an optional image tag, for example `sh scripts/test-image.sh clinic-frontend:review`. It builds from the monorepo root using [`apps/frontend/Dockerfile`](../apps/frontend/Dockerfile) and serves a static frontend container, checking the delivered index/assets. The stack script uses a separate Compose project and disposable volumes, initializes PostgreSQL, runs SQL regression assertions, and checks the Redis/frontend services. Neither script should run against a real patient database.
 
 ## What each level verifies
 
 | Level | Files | Evidence |
 | --- | --- | --- |
-| Unit | [`frontend/src/clinic.test.ts`](../frontend/src/clinic.test.ts), [`frontend/src/demoLogin.test.ts`](../frontend/src/demoLogin.test.ts), [`frontend/src/workflow.test.ts`](../frontend/src/workflow.test.ts) | Pure date, booking, stored-data, and queue rules, plus public demo-credential matching, email normalization, exact passwords, and role-mismatch rejection. `workflow.test.ts` covers walk-in registration and email validation, check-in validation and identity matching, ticket and chart numbering, queue states and row actions, encounter and prescription construction, appointment validation and calendar days, allergy reconciliation and the doctor's keep/remove review, intake status and closing times, check-in text limits, online booking availability (booked, passed, and not-open slots without names) and its rules (window, one booking per day, overlap, past times), storage validation for online-booking days, directory filtering, and parser response validation. |
-| Component / integration | [`frontend/src/App.test.tsx`](../frontend/src/App.test.tsx) | User interactions with the actual React app: public demo-credential matching and mismatch feedback, explicit `/login` and role-view routing, in-memory-session boundaries, role-specific UI isolation, local hero-cover validation/replacement/reset, explicit synthetic-demo entry, validation, chart isolation, booking, queue behavior, staff-confirmed allergy status, unknown sex selection, encounter note preservation, prescriptions, and browser storage. Registration and check-in rejections create no chart or ticket, a paused queue shows no form, invalid appointment dates are refused, the printed prescription is labelled as a demo draft, and only one consultation can run at a time. Triage cannot remove a documented allergy, the visit cannot be saved until the doctor keeps or removes a conflicting one, replacing the QR invalidates the old link while keeping tickets and pause status, and "Continue later" returns the patient to the waiting list. Setting a closing time, ending or reopening the day, and the reason and symptoms patients write at check-in are covered too: the queue page closes on the clock without a button press, check-in refuses a form submitted after closing, and the reception and patient views show the matching state. Online booking can be opened and stopped per day, patients can book only open times on those days, booked times never show a name, and a second online booking on the same day is refused. Browser APIs can be mocked here. |
-| Browser | [`frontend/e2e/clinic.spec.ts`](../frontend/e2e/clinic.spec.ts), [`frontend/e2e/srs-scenarios.spec.ts`](../frontend/e2e/srs-scenarios.spec.ts) | Clinic-day journeys with synthetic patients and staff sign-ins: acceptance scenarios 1–5, 7–9, the allergy-removal rule (ALL-01), and a full working day from QR check-in through triage, a visit, QR replacement, and a lunch pause. [`frontend/e2e/queue-lanes.spec.ts`](../frontend/e2e/queue-lanes.spec.ts) covers the priority and regular lanes: a senior and a child checking in after an adult are called first, and each patient sees the current number and how many are ahead. [`frontend/e2e/manual-queue-entry.spec.ts`](../frontend/e2e/manual-queue-entry.spec.ts) covers the attendant and the doctor adding a patient by hand after intake has ended, with an urgent patient called first. [`frontend/e2e/online-booking.spec.ts`](../frontend/e2e/online-booking.spec.ts) covers the doctor opening a day for online booking, a patient seeing booked times without names, booking a free time, and refusing a second booking that day. [`frontend/e2e/intake-session.spec.ts`](../frontend/e2e/intake-session.spec.ts) covers intake closing on the clock at the closing time, ending and reopening the day, and symptoms written at check-in reaching triage and the visit. Shared helpers are in [`frontend/e2e/support.ts`](../frontend/e2e/support.ts). | Desktop and mobile Chromium journeys against a production build, including matching/mismatched demo credentials, Doctor/Attendant/Patient view navigation, Back/Forward and refresh/direct-route login boundaries, actual hero-image loading and cover selection/reset, explicit demo entry, public check-in and triage allergy confirmation, reload persistence, responsive hero/form layout, and absence of unhandled application errors. |
-| Database | [`db/tests/regression.sql`](../db/tests/regression.sql) | Real PostgreSQL 16 constraints, foreign keys, slot exclusions, timestamp consistency, and completed-visit/prescription aggregation. Test fixtures and helpers are rolled back. |
+| Unit | [`apps/frontend/src/clinic.test.ts`](../apps/frontend/src/clinic.test.ts), [`apps/frontend/src/demoLogin.test.ts`](../apps/frontend/src/demoLogin.test.ts), [`apps/frontend/src/workflow.test.ts`](../apps/frontend/src/workflow.test.ts) | Pure date, booking, stored-data, and queue rules, plus public demo-credential matching, email normalization, exact passwords, and role-mismatch rejection. `workflow.test.ts` covers walk-in registration and email validation, check-in validation and identity matching, ticket and chart numbering, queue states and row actions, encounter and prescription construction, appointment validation and calendar days, allergy reconciliation and the doctor's keep/remove review, intake status and closing times, check-in text limits, online booking availability (booked, passed, and not-open slots without names) and its rules (window, one booking per day, overlap, past times), storage validation for online-booking days, directory filtering, and parser response validation. |
+| Component / integration | [`apps/frontend/src/App.test.tsx`](../apps/frontend/src/App.test.tsx) | User interactions with the actual React app: public demo-credential matching and mismatch feedback, explicit `/login` and role-view routing, in-memory-session boundaries, role-specific UI isolation, local hero-cover validation/replacement/reset, explicit synthetic-demo entry, validation, chart isolation, booking, queue behavior, staff-confirmed allergy status, unknown sex selection, encounter note preservation, prescriptions, and browser storage. Registration and check-in rejections create no chart or ticket, a paused queue shows no form, invalid appointment dates are refused, the printed prescription is labelled as a demo draft, and only one consultation can run at a time. Triage cannot remove a documented allergy, the visit cannot be saved until the doctor keeps or removes a conflicting one, replacing the QR invalidates the old link while keeping tickets and pause status, and "Continue later" returns the patient to the waiting list. Setting a closing time, ending or reopening the day, and the reason and symptoms patients write at check-in are covered too: the queue page closes on the clock without a button press, check-in refuses a form submitted after closing, and the reception and patient views show the matching state. Online booking can be opened and stopped per day, patients can book only open times on those days, booked times never show a name, and a second online booking on the same day is refused. Browser APIs can be mocked here. |
+| Browser | [`apps/frontend/e2e/clinic.spec.ts`](../apps/frontend/e2e/clinic.spec.ts), [`apps/frontend/e2e/srs-scenarios.spec.ts`](../apps/frontend/e2e/srs-scenarios.spec.ts) | Clinic-day journeys with synthetic patients and staff sign-ins: acceptance scenarios 1–5, 7–9, the allergy-removal rule (ALL-01), and a full working day from QR check-in through triage, a visit, QR replacement, and a lunch pause. [`apps/frontend/e2e/queue-lanes.spec.ts`](../apps/frontend/e2e/queue-lanes.spec.ts) covers the priority and regular lanes: a senior and a child checking in after an adult are called first, and each patient sees the current number and how many are ahead. [`apps/frontend/e2e/manual-queue-entry.spec.ts`](../apps/frontend/e2e/manual-queue-entry.spec.ts) covers the attendant and the doctor adding a patient by hand after intake has ended, with an urgent patient called first. [`apps/frontend/e2e/online-booking.spec.ts`](../apps/frontend/e2e/online-booking.spec.ts) covers the doctor opening a day for online booking, a patient seeing booked times without names, booking a free time, and refusing a second booking that day. [`apps/frontend/e2e/intake-session.spec.ts`](../apps/frontend/e2e/intake-session.spec.ts) covers intake closing on the clock at the closing time, ending and reopening the day, and symptoms written at check-in reaching triage and the visit. Shared helpers are in [`apps/frontend/e2e/support.ts`](../apps/frontend/e2e/support.ts). | Desktop and mobile Chromium journeys against a production build, including matching/mismatched demo credentials, Doctor/Attendant/Patient view navigation, Back/Forward and refresh/direct-route login boundaries, actual hero-image loading and cover selection/reset, explicit demo entry, public check-in and triage allergy confirmation, reload persistence, responsive hero/form layout, and absence of unhandled application errors. |
+| Database | [`apps/api/db/tests/regression.sql`](../apps/api/db/tests/regression.sql) | Real PostgreSQL 16 constraints, foreign keys, slot exclusions, timestamp consistency, and completed-visit/prescription aggregation. Test fixtures and helpers are rolled back. |
 | Development stack | [`scripts/test-stack.sh`](../scripts/test-stack.sh) | Compose configuration, service startup, fresh database initialization/regressions, Redis, and frontend HTTP response. |
 | Delivery artifact | [`scripts/test-image.sh`](../scripts/test-image.sh) | Production frontend image builds and serves its index and bundled assets. |
-| Parser API | [`services/doc-parser/test_app.py`](../services/doc-parser/test_app.py) | Health, API-key rejection, extension and upload-size errors, decoded-image and PDF raster limits, image/scanned-page OCR, and temp-file cleanup. Native OCR/rendering are mocked. |
-| Backend proxy | [`backend/server.test.mjs`](../backend/server.test.mjs) | Secret-header forwarding, multipart response handling, unavailable-service errors, missing configuration, upload limits, and recovery after cancelled uploads. |
+| Parser API | [`apps/doc-parser/test_app.py`](../apps/doc-parser/test_app.py) | Health, API-key rejection, extension and upload-size errors, decoded-image and PDF raster limits, image/scanned-page OCR, and temp-file cleanup. Native OCR/rendering are mocked. |
+| API proxy | [`apps/api/server.test.mjs`](../apps/api/server.test.mjs) | Secret-header forwarding, multipart response handling, unavailable-service errors, missing configuration, upload limits, and recovery after cancelled uploads. |
 
-Vitest reports coverage for application sources through `npm run test:coverage`. Coverage reports are evidence of exercised code, not proof that every requirement or branch is correct. TypeScript checks are part of the frontend build. The browser suite freezes time for repeatable dates and exercises both desktop and narrow-screen navigation; the application itself still uses the user's local date.
+Vitest reports coverage for application sources through `pnpm test:coverage`. Coverage reports are evidence of exercised code, not proof that every requirement or branch is correct. TypeScript checks are part of the frontend build. The browser suite freezes time for repeatable dates and exercises both desktop and narrow-screen navigation; the application itself still uses the user's local date.
 
 CI enforces an initial coverage floor of 75% lines, 70% branches, 65% statements, and 60% functions across the application, plus 100% for the extracted date, booking, validation, and storage helpers in `clinic.ts` and the clinical-workflow rules in `workflow.ts`. These thresholds prevent coverage from silently declining; they do not substitute for behavioral assertions.
 
-Useful local reports are `frontend/coverage/index.html` and `frontend/playwright-report/index.html`. Browser failures retain traces and screenshots under `.context/test-results/`. These outputs are ignored by Git. Run `npx playwright show-report` from `frontend` to inspect the browser report.
+Useful local reports are `apps/frontend/coverage/index.html` and `apps/frontend/playwright-report/index.html`. Browser failures retain traces and screenshots under `.context/test-results/`. These outputs are ignored by Git. Run `pnpm --filter @clinic/frontend exec playwright show-report` from the repository root to inspect the browser report.
 
 ## CI and continuous delivery
 
@@ -68,14 +67,14 @@ Useful local reports are `frontend/coverage/index.html` and `frontend/playwright
 | Job | Required checks / output |
 | --- | --- |
 | `workflow` | Validate GitHub Actions with actionlint and check shell script syntax. |
-| `backend` | Test multipart proxy forwarding, configuration/errors, upload limits, and cancelled uploads. |
+| `api` | Test multipart proxy forwarding, configuration/errors, upload limits, and cancelled uploads. |
 | `parser` | Test the document-parser API, extraction, resource limits, and cleanup. |
-| `frontend` | Install from the lockfile, run unit/component coverage, and execute the desktop/mobile browser suite against a production build. Preserve reports for review. |
+| `frontend` | Install from the pnpm lockfile, run typecheck and unit/component coverage, and execute the desktop/mobile browser suite against a production build. Preserve reports for review. |
 | `stack` | Run the isolated Compose stack smoke test and PostgreSQL regressions. |
 | `container` | Build and smoke-test the frontend image, then save that tested image as a workflow artifact. |
 | `deliver` | Only on a main-branch push and only after all check jobs succeed: download the already-tested image and publish it to GHCR with the commit SHA and `main` tags. |
 
-Pull requests do not publish images. Delivery uses the workflow's GitHub token with package-write permission; repository/organization package policies must permit it. No server credentials or live deployment target are configured. Publishing a frontend image is continuous delivery of the demo, not deployment of a functioning backend EHR.
+Pull requests do not publish images. Delivery uses the workflow's GitHub token with package-write permission; repository/organization package policies must permit it. No server credentials or live deployment target are configured. Publishing a frontend image is continuous delivery of the demo, not deployment of a functioning API and EHR.
 
 Repository maintainers should configure branch protection to require the test jobs before merge. Workflow files define checks and job dependencies; they do not configure repository branch protection themselves.
 
@@ -91,6 +90,6 @@ Use behavioral assertions and negative cases: a rejected booking must leave exis
 
 ## Limits and future tests
 
-The public sample credentials and browser-only demo views do not establish authentication or API authorization. The backend currently provides only the document-parser proxy. These checks cannot establish API authorization, shared persistence, a synchronized multi-device queue, staff identity, permitted visit transitions, atomic appointment/visit completion, audit history, migrations, or backup recovery. The SQL history view is not itself an authorization boundary. A browser `localStorage` test is not a server persistence test.
+The public sample credentials and browser-only demo views do not establish authentication or API authorization. The API currently provides only the document-parser proxy. These checks cannot establish API authorization, shared persistence, a synchronized multi-device queue, staff identity, permitted visit transitions, atomic appointment/visit completion, audit history, migrations, or backup recovery. The SQL history view is not itself an authorization boundary. A browser `localStorage` test is not a server persistence test.
 
 Add API integration and browser tests for those capabilities as they are implemented, using the requirement IDs in the SRS. Run future migrations against an existing schema as well as a fresh database. Keep all test fixtures synthetic, and verify workload, security, accessibility, and recovery requirements separately before handling real patient records.
