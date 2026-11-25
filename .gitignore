@@ -7,3 +7,6 @@ coverage/
 playwright-report/
 test-results/
 .context/
+.pnpm-store/
+mise.local.toml
+.mise.local.toml

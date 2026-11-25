@@ -10,6 +10,17 @@ FastAPI service for extracting embedded PDF text and OCR text from scanned PDF p
 - Images are limited to 20,000,000 pixels and 10,000 pixels on either edge, checked before decoding. PDF pages requiring OCR must fit within 4,000 pixels on either edge at 200 DPI, including the PDF's `UserUnit` scale. These limits allow ordinary document scans while bounding the raster size; oversized inputs return 422. Poppler receives an explicit render-size cap, and rendered images are closed after OCR.
 - WebP dimensions are checked directly in the file header before opening the native decoder, which allocates canvas buffers during opening. Image content must also be one of the supported image formats, regardless of its filename.
 
+## Local development
+
+This directory includes [`mise.toml`](mise.toml), which pins Python `3.13` (matching CI) and configures an automatic `.venv` virtual environment:
+
+```sh
+cd apps/doc-parser
+mise install
+python -m pip install -r requirements-dev.txt
+python -m pytest test_app.py
+```
+
 ## Install on Debian
 
 Copy these files into `/data/home/doc-parser` on Debian, then run `sudo bash install-debian.sh`. The script installs the OS packages, creates the isolated venv, generates `.env` only when missing, and enables a systemd service that restarts on failure and boot. It runs as the invoking user by default (`SERVICE_USER` can override that).
@@ -26,4 +37,4 @@ test -f .env || printf 'APP_API_KEY=%s\n' "$(openssl rand -hex 16)" > .env
 
 Copy `doc-parser.service` to `/etc/systemd/system/doc-parser@.service`, then run `systemctl enable --now doc-parser@$(id -un)`. The service binds to `0.0.0.0:8000`.
 
-The API key stays on the VM and in the backend environment. Do not put it in frontend variables or commit `.env`.
+The API key stays on the VM and in the API environment. Do not put it in frontend variables or commit `.env`.

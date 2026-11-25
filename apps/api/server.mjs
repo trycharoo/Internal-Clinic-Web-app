@@ -8,10 +8,10 @@ function sendJson(response, status, body) {
   response.end(JSON.stringify(body))
 }
 
-export function createBackendServer({ parserUrl = process.env.DOC_PARSER_URL, parserApiKey = process.env.DOC_PARSER_API_KEY, fetchImpl = fetch, logger = console } = {}) {
+export function createApiServer({ parserUrl = process.env.DOC_PARSER_URL, parserApiKey = process.env.DOC_PARSER_API_KEY, fetchImpl = fetch, logger = console } = {}) {
   return createServer(async (request, response) => {
     if (request.method === 'GET' && request.url === '/health') {
-      return sendJson(response, 200, { status: 'ok', service: 'clinic-backend' })
+      return sendJson(response, 200, { status: 'ok', service: 'clinic-api' })
     }
     if (request.method !== 'POST' || request.url !== '/api/documents/parse') {
       return sendJson(response, 404, { detail: 'Not found' })
@@ -71,5 +71,5 @@ export function createBackendServer({ parserUrl = process.env.DOC_PARSER_URL, pa
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
-  createBackendServer().listen(port, '0.0.0.0', () => console.log(`Clinic backend listening on ${port}`))
+  createApiServer().listen(port, '0.0.0.0', () => console.log(`Clinic API listening on ${port}`))
 }

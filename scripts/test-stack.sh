@@ -8,7 +8,7 @@ response_file=$(mktemp)
 export POSTGRES_DB=clinic_test POSTGRES_USER=clinic_test
 export POSTGRES_PASSWORD=isolated-postgres-test-password
 export REDIS_PASSWORD=isolated-redis-test-password
-export FRONTEND_PORT=0 BACKEND_PORT=0 POSTGRES_PORT=0 REDIS_PORT=0
+export FRONTEND_PORT=0 API_PORT=0 POSTGRES_PORT=0 REDIS_PORT=0
 
 compose() {
   docker compose --file docker-compose.yml --project-name "$test_project" --env-file /dev/null "$@"
@@ -28,7 +28,7 @@ trap 'exit 143' TERM
 
 compose config --quiet
 compose up --detach --wait --wait-timeout 240
-compose exec -T postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 < db/tests/regression.sql
+compose exec -T postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 < apps/api/db/tests/regression.sql
 compose exec -T redis sh -c 'REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli ping' | grep -qx PONG
 frontend_address=$(compose port frontend 5173)
 curl --fail --silent --show-error "http://$frontend_address/" > "$response_file"

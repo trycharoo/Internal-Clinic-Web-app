@@ -2,12 +2,12 @@ import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { afterEach, describe, it } from 'node:test'
 import { promisify } from 'node:util'
-import { createBackendServer } from './server.mjs'
+import { createApiServer } from './server.mjs'
 
 let server
 
 async function start(options) {
-  server = createBackendServer(options)
+  server = createApiServer(options)
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
   return `http://127.0.0.1:${server.address().port}`
 }
@@ -77,9 +77,9 @@ describe('document parser proxy', () => {
     const { stdout } = await promisify(execFile)(process.execPath, ['--input-type=module', '--eval', `
       import assert from 'node:assert/strict'
       import { createConnection } from 'node:net'
-      import { createBackendServer } from ${JSON.stringify(serverModule)}
+      import { createApiServer } from ${JSON.stringify(serverModule)}
 
-      const server = createBackendServer({
+      const server = createApiServer({
         parserUrl: 'https://parser.example', parserApiKey: 'synthetic',
         fetchImpl: () => assert.fail('An incomplete upload must not be forwarded'),
       })
@@ -100,7 +100,7 @@ describe('document parser proxy', () => {
       await new Promise((resolve) => setImmediate(resolve))
       const response = await fetch('http://127.0.0.1:' + server.address().port + '/health')
       assert.equal(response.status, 200)
-      assert.deepEqual(await response.json(), { status: 'ok', service: 'clinic-backend' })
+      assert.deepEqual(await response.json(), { status: 'ok', service: 'clinic-api' })
       await new Promise((resolve) => server.close(resolve))
       console.log('Health remains available after cancelled upload')
     `], { timeout: 10_000 })

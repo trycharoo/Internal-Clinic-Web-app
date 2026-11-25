@@ -5,7 +5,7 @@ const baseURL = externalURL || 'http://127.0.0.1:4173'
 
 export default defineConfig({
   testDir: './e2e',
-  outputDir: '../.context/test-results',
+  outputDir: '../../.context/test-results',
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: 0,
@@ -22,7 +22,7 @@ export default defineConfig({
     { name: 'mobile-chromium', use: { ...devices['Pixel 7'] } },
   ],
   webServer: externalURL ? undefined : {
-    command: 'npm run build && npm run preview -- --host 127.0.0.1 --port 4173 --strictPort',
+    command: 'pnpm run build && pnpm exec vite preview --host 127.0.0.1 --port 4173 --strictPort',
     url: baseURL,
     reuseExistingServer: false,
     timeout: 120_000,
