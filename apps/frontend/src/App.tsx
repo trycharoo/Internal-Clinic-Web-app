@@ -244,11 +244,12 @@ function App() {
     return () => window.removeEventListener('keydown', focusSearch)
   }, [])
 
-  const todayAppointments = useMemo(() => appointments
-    .filter((appointment) => appointment.date === dateKey(new Date()) && appointment.status !== 'cancelled')
-    .sort((a, b) => a.time.localeCompare(b.time)), [appointments])
   const now = useClock(30_000)
-  const todayQueue = queueSession?.date === dateKey(new Date()) ? queueSession : null
+  const todayKey = dateKey(now)
+  const todayAppointments = useMemo(() => appointments
+    .filter((appointment) => appointment.date === todayKey && appointment.status !== 'cancelled')
+    .sort((a, b) => a.time.localeCompare(b.time)), [appointments, todayKey])
+  const todayQueue = queueSession?.date === todayKey ? queueSession : null
   const intake: IntakeStatus | null = todayQueue ? intakeStatus(todayQueue, now) : null
   const chartPatient = patients.find((patient) => patient.id === chartPatientId) ?? null
   const searchResults = searchPatients(patients, search)
@@ -1295,7 +1296,7 @@ function PatientChart({ patient, tab, onTabChange, onBack, onUpdate, onAddRecord
       const form = new FormData()
       form.append('file', file)
       const response = await fetch('/api/documents/parse', { method: 'POST', body: form })
-      const result: unknown = await response.json()
+      const result: unknown = await response.json().catch(() => null)
       if (!response.ok) throw new Error(parserErrorMessage(result))
       const parsed = parsedDocument(result)
       if (!parsed) throw new Error('The parser returned an invalid response.')

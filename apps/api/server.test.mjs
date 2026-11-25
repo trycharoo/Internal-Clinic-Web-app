@@ -106,4 +106,31 @@ describe('document parser proxy', () => {
     `], { timeout: 10_000 })
     assert.match(stdout, /Health remains available after cancelled upload/)
   })
+
+  it('returns 404 for unknown routes and unsupported methods without calling upstream', async () => {
+    let called = false
+    const base = await start({ parserUrl: 'https://parser.example', parserApiKey: 'secret', fetchImpl: () => { called = true } })
+    for (const [method, path] of [['GET', '/api/documents/parse'], ['POST', '/api/unknown']]) {
+      const response = await fetch(`${base}${path}`, { method })
+      assert.equal(response.status, 404)
+      assert.deepEqual(await response.json(), { detail: 'Not found' })
+    }
+    assert.equal(called, false)
+  })
+
+  it('forwards upstream non-200 status codes and payloads verbatim', async () => {
+    for (const [status, detail] of [[415, 'Unsupported file type'], [422, 'Unable to parse document']]) {
+      const fetchImpl = async () => new Response(JSON.stringify({ detail }), {
+        status,
+        headers: { 'content-type': 'application/json' },
+      })
+      const base = await start({ parserUrl: 'https://parser.example', parserApiKey: 'secret', fetchImpl })
+      const form = new FormData()
+      form.append('file', new Blob(['data']), 'scan.bin')
+      const response = await fetch(`${base}/api/documents/parse`, { method: 'POST', body: form })
+      assert.equal(response.status, status)
+      assert.deepEqual(await response.json(), { detail })
+      await new Promise((resolve) => server.close(resolve))
+    }
+  })
 })
