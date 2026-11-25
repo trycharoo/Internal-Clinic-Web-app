@@ -1,6 +1,6 @@
 import { Activity, ArrowRight, CalendarDays, CheckCircle2, ClipboardList, Clock3, HeartHandshake, LogOut, Plus, QrCode, UserRound, UserRoundPlus, Users } from 'lucide-react'
 import { useState, type FormEvent } from 'react'
-import { dateKey, type Appointment, type Patient, type QueueSession } from './clinic'
+import { dateKey, isDateKey, type Appointment, type Patient, type QueueSession } from './clinic'
 import { addDays, canRecordTriage, dayAvailability, formatTime, isAwaitingDoctor, ONLINE_BOOKING_DAYS, REASON_MAX_LENGTH, type IntakeStatus, type SlotStatus } from './workflow'
 import './patient-booking.css'
 import './demo-role-views.css'
@@ -88,6 +88,7 @@ function PatientBookingCard({ patientId, appointments, acceptingDates, onBookOnl
     .sort((a, b) => `${a.date}${a.time}`.localeCompare(`${b.date}${b.time}`))
 
   function chooseDate(next: string) {
+    if (!isDateKey(next)) return
     setDate(next)
     setSelectedTime('')
     setError('')

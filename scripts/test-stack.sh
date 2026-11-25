@@ -30,7 +30,13 @@ compose config --quiet
 compose up --detach --wait --wait-timeout 240
 compose exec -T postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 < apps/api/db/tests/regression.sql
 compose exec -T redis sh -c 'REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli ping' | grep -qx PONG
+api_address=$(compose port api 3000)
+curl --fail --silent --show-error "http://$api_address/health" > "$response_file"
+grep -q '"clinic-api"' "$response_file"
 frontend_address=$(compose port frontend 5173)
 curl --fail --silent --show-error "http://$frontend_address/" > "$response_file"
 grep -q '<div id="root"></div>' "$response_file"
-printf '%s\n' 'Compose, PostgreSQL regressions, Redis and frontend smoke checks passed.'
+proxy_status=$(curl --silent --output "$response_file" --write-out '%{http_code}' --request POST "http://$frontend_address/api/documents/parse")
+test "$proxy_status" -eq 503
+grep -q 'Document parsing is not configured' "$response_file"
+printf '%s\n' 'Compose, PostgreSQL regressions, Redis, API health and frontend/API proxy smoke checks passed.'

@@ -65,6 +65,11 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
   frontend:
     image: node:22-alpine
@@ -83,7 +88,8 @@ services:
     ports:
       - "127.0.0.1:${FRONTEND_PORT:-5173}:5173"
     depends_on:
-      - api
+      api:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:5173').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
       interval: 5s
