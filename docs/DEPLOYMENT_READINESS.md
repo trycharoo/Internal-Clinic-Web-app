@@ -8,7 +8,7 @@ Reviewed 2026-11-14 against the working [SRS](SRS.md), [testing guide](TESTING.m
 
 | Evidence | Current state | Why it blocks clinical use |
 | --- | --- | --- |
-| [API service](../docker-compose.yml) and [API app](../apps/api/server.mjs) | Compose runs a placeholder; there is no application API. | The browser cannot enforce access, transactional workflows, or shared records. |
+| [API service](../docker-compose.yml) and [API app](../apps/api/src/app.ts) | Compose runs a placeholder; there is no application API. | The browser cannot enforce access, transactional workflows, or shared records. |
 | [Frontend state](../apps/frontend/src/App.tsx) | Patients, appointments, and queue are stored in each browser's `localStorage`. | Another device lacks the same chart or queue; durable recovery and concurrent updates cannot be established. |
 | [SRS baseline](SRS.md) and [SQL schema](../apps/api/db/init.sql) | No authenticated staff session, enforced role permissions, clinical audit, final prescription workflow, or versioned migrations. | A displayed doctor name or database role enum does not prove author identity or protect patient records. |
 | [Testing guide](TESTING.md) | Unit, component, browser, PostgreSQL, stack, and image tests cover the demo. | They do not establish API authorization, cross-device consistency, recovery, or safe clinical operation. |

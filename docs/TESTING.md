@@ -52,7 +52,7 @@ The image test accepts an optional image tag, for example `sh scripts/test-image
 | Development stack | [`scripts/test-stack.sh`](../scripts/test-stack.sh) | Compose configuration, service startup, fresh database initialization/regressions, Redis, API health, and frontend + `/api` proxy HTTP responses. |
 | Delivery artifact | [`scripts/test-image.sh`](../scripts/test-image.sh) | Production frontend image builds and serves its index and bundled assets. |
 | Parser API | [`apps/doc-parser/test_app.py`](../apps/doc-parser/test_app.py) | Health (including unavailable Tesseract), API-key rejection, extension/upload-size errors, path-traversal filename sanitization, digital multi-page PDF extraction, encrypted/empty PDF rejection, decoded-image and PDF raster limits, image/scanned-page OCR, temp-file cleanup, and a real Tesseract/Poppler smoke check when installed (required in CI). |
-| API proxy | [`apps/api/server.test.mjs`](../apps/api/server.test.mjs) | Secret-header forwarding, multipart response handling, 404 method/route rejection, upstream error status passthrough, unavailable-service errors, missing configuration, upload limits, and recovery after cancelled uploads. |
+| API proxy | [`apps/api/src/app.test.ts`](../apps/api/src/app.test.ts), [`apps/api/src/server.test.ts`](../apps/api/src/server.test.ts) | Secret-header forwarding, multipart response handling, 404 method/route rejection, upstream error status passthrough, unavailable-service errors, missing configuration, upload limits, bounded error handling, and recovery after cancelled uploads. |
 
 Vitest reports coverage for application sources through `pnpm test:coverage`. Coverage reports are evidence of exercised code, not proof that every requirement or branch is correct. TypeScript checks are part of the frontend build. The browser suite freezes time for repeatable dates and exercises both desktop and narrow-screen navigation; the application itself still uses the user's local date.
 
@@ -67,7 +67,7 @@ Useful local reports are `apps/frontend/coverage/index.html` and `apps/frontend/
 | Job | Required checks / output |
 | --- | --- |
 | `workflow` | Validate GitHub Actions with actionlint and check shell script syntax. |
-| `api` | Test multipart proxy forwarding, configuration/errors, upload limits, and cancelled uploads. |
+| `api` | Install `@clinic/api` workspace dependencies, type-check TypeScript, and test multipart proxy forwarding, configuration/errors, upload limits, and cancelled uploads. |
 | `parser` | Test the document-parser API, extraction, resource limits, and cleanup. |
 | `frontend` | Install from the pnpm lockfile, run typecheck and unit/component coverage, and execute the desktop/mobile browser suite against a production build. Preserve reports for review. |
 | `stack` | Run the isolated Compose stack smoke test and PostgreSQL regressions. |
