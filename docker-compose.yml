@@ -42,9 +42,10 @@ services:
   api:
     image: node:22-alpine
     working_dir: /app
-    command: ["node", "server.mjs"]
+    command: ["sh", "-c", "npm install -g pnpm@12.18.0 && pnpm install --frozen-lockfile --filter @clinic/api... && exec node apps/api/src/index.ts"]
     environment:
       NODE_ENV: development
+      PNPM_STORE_DIR: /pnpm/store
       PORT: 3000
       DATABASE_HOST: postgres
       DATABASE_PORT: 5432
@@ -57,7 +58,10 @@ services:
       DOC_PARSER_URL: ${DOC_PARSER_URL:-}
       DOC_PARSER_API_KEY: ${DOC_PARSER_API_KEY:-}
     volumes:
-      - ./apps/api:/app
+      - .:/app
+      - api_root_node_modules:/app/node_modules
+      - api_node_modules:/app/apps/api/node_modules
+      - pnpm_store:/pnpm/store
     ports:
       - "127.0.0.1:${API_PORT:-3000}:3000"
     depends_on:
@@ -69,7 +73,8 @@ services:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
       interval: 5s
       timeout: 5s
-      retries: 10
+      start_period: 30s
+      retries: 24
 
   frontend:
     image: node:22-alpine
@@ -100,6 +105,8 @@ services:
 volumes:
   postgres_data:
   redis_data:
+  api_root_node_modules:
+  api_node_modules:
   root_node_modules:
   frontend_node_modules:
   pnpm_store:

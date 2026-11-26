@@ -5,7 +5,7 @@ A clinic operations demo structured as a `pnpm` monorepo with a React frontend, 
 ## Repository layout
 
 - [`apps/frontend`](apps/frontend) (`@clinic/frontend`) — React + TypeScript + Vite SPA, Vitest suite, Playwright E2E suite, and Nginx production container
-- [`apps/api`](apps/api) (`@clinic/api`) — Node.js HTTP server (`server.mjs`) and [`apps/api/db`](apps/api/db) PostgreSQL schema + SQL regression tests
+- [`apps/api`](apps/api) (`@clinic/api`) — Hono.js Node.js API server ([`src/app.ts`](apps/api/src/app.ts)) and [`apps/api/db`](apps/api/db) PostgreSQL schema + SQL regression tests
 - [`apps/doc-parser`](apps/doc-parser) — Standalone Python/FastAPI OCR & PDF text-extraction service with its own [`apps/doc-parser/mise.toml`](apps/doc-parser/mise.toml) (excluded from `pnpm` workspaces)
 - [`packages`](packages/README.md) — Placeholder for future shared internal workspace packages
 - Root shared config: [`package.json`](package.json), [`pnpm-workspace.yaml`](pnpm-workspace.yaml), [`mise.toml`](mise.toml), [`tsconfig.base.json`](tsconfig.base.json), [`docker-compose.yml`](docker-compose.yml), [`.env.example`](.env.example), [`scripts/`](scripts), and [`docs/`](docs/SRS.md)
